@@ -221,3 +221,6 @@ __marimo__/
 
 # PyCharm project folder
 .idea/
+
+# One-off local scripts (for example the Groq model check)
+.claude/tmp/
