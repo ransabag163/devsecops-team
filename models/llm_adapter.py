@@ -44,10 +44,10 @@ def urllib_transport(url, headers, body, timeout):
 
 
 class LLMClient:
-    def __init__(self, provider, transport=urllib_transport, timeout=config.HTTP_TIMEOUT):
+    def __init__(self, provider, transport=None, timeout=config.HTTP_TIMEOUT):
         self.provider = provider
         self.spec = config.PROVIDERS[provider]
-        self.transport = transport
+        self.transport = transport or urllib_transport
         self.timeout = timeout
 
     @property
