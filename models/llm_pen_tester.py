@@ -29,7 +29,8 @@ Action formats:
 {"kind": "clarify", "text": "<a question for the human>"}
 
 Rules:
-1. First call analyze_code on the file you were given.
+1. You have not seen the file yet. Your first answer must be the tool action
+   that calls analyze_code on the file you were given.
 2. Then answer with final. Give a verdict for EVERY finding the tool returned,
    with the same rule and line. Do not drop findings and do not add new ones.
 3. verdict is "real" when the code is exploitable or unsafe as written, or
