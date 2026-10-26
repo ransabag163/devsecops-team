@@ -1,2 +1,16 @@
-# devsecops-team
-Three AI agents that find, fix and verify security issues in Python code
+# \# DevSecOps Agent Team
+
+# 
+
+# צוות של שלושה סוכני AI שבודקים קוד פייתון:
+
+# \- בודק אבטחה: מוצא חולשות
+
+# \- מפתח: מציע תיקון
+
+# \- בודק תיקונים: מוודא שהתיקון עובד
+
+# 
+
+# פרויקט בקורס סוכני AI.
+
