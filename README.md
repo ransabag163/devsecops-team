@@ -1,16 +1,8 @@
-# \# DevSecOps Agent Team
+﻿# DevSecOps Agent Team
 
-# 
+Three AI agents that check Python code for security issues:
+- Pen tester: finds weaknesses
+- Developer: proposes a fix
+- Tester: verifies that the fix works
 
-# צוות של שלושה סוכני AI שבודקים קוד פייתון:
-
-# \- בודק אבטחה: מוצא חולשות
-
-# \- מפתח: מציע תיקון
-
-# \- בודק תיקונים: מוודא שהתיקון עובד
-
-# 
-
-# פרויקט בקורס סוכני AI.
-
+Project for the AI Agents course.
