@@ -137,6 +137,17 @@ def test_model_error_gives_input_error(code):
     assert run["trace"] == [{"step": 1, "action": None, "error": code}]
 
 
+def test_http_error_keeps_the_status_in_report_and_trace():
+    class FailingClient:
+        def chat(self, messages):
+            raise LLMError("http_error", 429)
+
+    run = review(FailingClient())
+
+    assert run["result"]["error"] == "http_error (429)"
+    assert run["trace"][0]["error"] == "http_error (429)"
+
+
 def test_no_file_path_asks_to_clarify_without_calling_the_model():
     client = FakeClient()
 

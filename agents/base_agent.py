@@ -34,9 +34,9 @@ class BaseAgent:
             try:
                 action = self.model.decide(state)
             except LLMError as e:
-                # The model could not be reached. Only the error code is kept.
-                trace.append({"step": step, "action": None, "error": e.code})
-                return {"status": "final", "result": self.finish_with_error(e.code, state), "trace": trace}
+                # The model could not be reached. Only the error code (and HTTP status) is kept.
+                trace.append({"step": step, "action": None, "error": str(e)})
+                return {"status": "final", "result": self.finish_with_error(str(e), state), "trace": trace}
 
             entry = {"step": step, "action": action}
             trace.append(entry)
