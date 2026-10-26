@@ -7,15 +7,25 @@ and runs it. Every check happens here, before the tool runs.
 from pathlib import Path
 
 from tools.analyze_code import analyze_code
+from tools.patch_tools import make_diff, read_snippet
 
 # Every tool, with the exact arguments it accepts and their types.
 TOOLS = {
     "analyze_code": {"func": analyze_code, "args": {"file_path": str}},
+    "read_snippet": {
+        "func": read_snippet,
+        "args": {"file_path": str, "start_line": int, "end_line": int},
+    },
+    "make_diff": {
+        "func": make_diff,
+        "args": {"file_path": str, "start_line": int, "end_line": int, "replacement": str},
+    },
 }
 
 # Which tools each agent may use.
 ALLOWLIST = {
     "pen_tester": {"analyze_code"},
+    "developer": {"read_snippet", "make_diff"},
 }
 
 # Arguments that hold a file path and must stay inside the project.
