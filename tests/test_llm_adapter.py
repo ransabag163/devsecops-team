@@ -42,6 +42,27 @@ def test_chat_sends_an_openai_style_request(key):
     assert call["body"]["messages"] == [{"role": "user", "content": "hello"}]
 
 
+def test_gemini_url_and_key_are_joined_correctly(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", FAKE_KEY)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    transport = FakeTransport()
+
+    LLMClient("gemini", transport).chat([])
+
+    call = transport.calls[0]
+    assert call["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    assert call["headers"]["Authorization"] == f"Bearer {FAKE_KEY}"
+    assert call["body"]["model"] == "gemini-3.8-flash"
+
+
+def test_every_agent_has_a_default_model():
+    import config
+    from models.llm_adapter import DEFAULT_MODELS
+
+    for provider in config.AGENT_PROVIDER.values():
+        assert provider in DEFAULT_MODELS
+
+
 def test_model_env_overrides_the_default(key, monkeypatch):
     monkeypatch.setenv("GROQ_MODEL", "some-other-model")
     transport = FakeTransport()
