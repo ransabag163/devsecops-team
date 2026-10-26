@@ -15,6 +15,8 @@ MAX_RAW_REPLY = 500
 SYSTEM_PROMPT = """\
 You are pen_tester, a security reviewer for Python code. You work in steps.
 In each step you answer with exactly ONE JSON object and nothing else.
+You cannot call functions directly. Write the JSON action as plain text in
+your final reply; the application checks it and runs it.
 
 Allowed tool (the only one):
 - analyze_code(file_path: str): static analysis of one Python file.
