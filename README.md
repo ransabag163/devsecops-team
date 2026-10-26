@@ -66,7 +66,7 @@ GROQ_API_KEY=המפתח-שלכם
 GEMINI_API_KEY=המפתח-שלכם
 ```
 
-אפשר להוסיף `GEMINI_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `gemini-3.8-flash`).
+אפשר להוסיף `GEMINI_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `gemini-3.1-flash-lite`).
 
 הרצת הטסטים:
 

@@ -16,7 +16,8 @@ import config
 # Used when the provider's model_env variable is not set.
 DEFAULT_MODELS = {
     "groq": "openai/gpt-oss-120b",
-    "gemini": "gemini-3.8-flash",
+    # The bigger Flash models timed out or returned 503 when tested; flash-lite answered in ~1.5s.
+    "gemini": "gemini-3.1-flash-lite",
 }
 
 

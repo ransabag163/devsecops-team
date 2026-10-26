@@ -52,7 +52,7 @@ def test_gemini_url_and_key_are_joined_correctly(monkeypatch):
     call = transport.calls[0]
     assert call["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     assert call["headers"]["Authorization"] == f"Bearer {FAKE_KEY}"
-    assert call["body"]["model"] == "gemini-3.8-flash"
+    assert call["body"]["model"] == "gemini-3.1-flash-lite"
 
 
 def test_every_agent_has_a_default_model():
