@@ -19,6 +19,8 @@ SQL_WORDS = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b", re.IGNORECASE)
 SECRET_NAMES = re.compile(r"password|passwd|secret|api_key|token", re.IGNORECASE)
 SUBPROCESS_FUNCS = {"run", "call", "Popen", "check_call", "check_output"}
 MAX_EVIDENCE = 120
+CONTEXT_LINES = 5
+MAX_CONTEXT = 1500
 
 
 def analyze_code(file_path):
@@ -53,6 +55,7 @@ def analyze_code(file_path):
             "cwe": cwe,
             "line": line,
             "evidence": _evidence(lines, line),
+            "context": _context(lines, line),
         })
     return {"ok": True, "findings": findings}
 
@@ -61,6 +64,14 @@ def _evidence(lines, line):
     if 1 <= line <= len(lines):
         return lines[line - 1].strip()[:MAX_EVIDENCE]
     return ""
+
+
+def _context(lines, line):
+    """The source lines around a finding, with line numbers, so a model can judge it."""
+    start = max(1, line - CONTEXT_LINES)
+    end = min(len(lines), line + CONTEXT_LINES)
+    text = "\n".join(f"{n}: {lines[n - 1]}" for n in range(start, end + 1))
+    return text[:MAX_CONTEXT]
 
 
 # ---------- CWE-89: SQL built from pieces and passed to execute() ----------
