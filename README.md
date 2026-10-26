@@ -48,6 +48,26 @@ GROQ_API_KEY=המפתח-שלכם
 הסוכן בודק את התשובה: אם המודל משמיט ממצא, מוסיף ממצא חדש או מחזיר JSON לא תקין, הריצה נגמרת ב־`invalid_action`.
 הטסטים לא קוראים ל־API האמיתי.
 
+### הצעת תיקונים (`--fix`)
+
+עם `--fix`, אחרי ה־pen_tester רץ גם סוכן ה־developer. הוא מציע תיקון קטן (diff) לכל ממצא `real`.
+ממצאי `false_positive` לא נשלחים אליו. הסוכן לא משנה את הקובץ המקורי. כל הצעה היא diff נפרד מול הקובץ המקורי, ואדם מחליט מה להחיל.
+
+```
+.venv\Scripts\python.exe main.py samples/login.py --fix
+.venv\Scripts\python.exe main.py samples/login.py --fix --model llm --trace
+```
+
+הפלט הוא `{"findings_report": ..., "fix_report": ...}`. קוד יציאה 2 גם אם ריצת ה־developer נכשלה.
+
+עם `--model llm`, ה־developer משתמש ב־Gemini, ולכן צריך להוסיף ל־`.env` גם:
+
+```
+GEMINI_API_KEY=המפתח-שלכם
+```
+
+אפשר להוסיף `GEMINI_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `gemini-3.8-flash`).
+
 הרצת הטסטים:
 
 ```
