@@ -1,0 +1,2 @@
+These are plain notes, not Python code.
+password = "this is not code and must not be analyzed"
