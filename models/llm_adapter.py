@@ -22,8 +22,9 @@ DEFAULT_MODELS = {
     "groq": "openai/gpt-oss-120b",
     # The bigger Flash models timed out or returned 503 when tested; flash-lite answered in ~1.5s.
     "gemini": "gemini-3.1-flash-lite",
-    # A free model from a third family (NVIDIA Nemotron), so the tester does not share the developer's blind spots.
-    "openrouter": "nvidia/nemotron-3-super-120b-a12b:free",
+    # A free model from a third family (Cohere), so the tester does not share the developer's blind spots.
+    # The free Nemotron endpoint returned 404 "Provider returned error" when tested.
+    "openrouter": "cohere/north-mini-code:free",
 }
 
 # Statuses that may pass if we wait (rate limit, server trouble). 400/401/403/404 never do.

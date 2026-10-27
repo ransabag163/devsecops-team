@@ -99,7 +99,7 @@ GEMINI_API_KEY=המפתח-שלכם
 OPENROUTER_API_KEY=המפתח-שלכם
 ```
 
-אפשר להוסיף `OPENROUTER_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `nvidia/nemotron-3-super-120b-a12b:free`).
+אפשר להוסיף `OPENROUTER_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `cohere/north-mini-code:free`).
 בשכבה החינמית של OpenRouter יש בערך 50 בקשות ליום.
 
 ### ניסיונות חוזרים (retry)
