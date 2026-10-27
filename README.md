@@ -102,10 +102,41 @@ OPENROUTER_API_KEY=המפתח-שלכם
 אפשר להוסיף `OPENROUTER_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `cohere/north-mini-code:free`).
 בשכבה החינמית של OpenRouter יש בערך 50 בקשות ליום.
 
+### ריצת הצוות (`review`) והחלה (`apply`)
+
+`review` מריץ את שלושת הסוכנים כגרף של LangGraph (`orchestrator.py`). לכל ממצא `real` יש עד 3 ניסיונות:
+אם ה־tester מחזיר `retry`, ה־developer מקבל את ה־feedback ומנסה שוב.
+
+```
+.venv\Scripts\python.exe main.py review samples/login.py
+.venv\Scripts\python.exe main.py review samples/login.py --model llm --trace
+```
+
+התוצאה היא כרטיסי החלטה ב־`reports/<file>-<זמן>.json` וב־`.md` (התיקייה לא נכנסת ל־git).
+כרטיסי `needs_you` מופיעים קודם, ואחריהם כרטיסי `ready`. כל כרטיס כולל:
+- הבעיה, ותוצאת טסט ה־attack לפני ואחרי.
+- ה־diff והבדיקות.
+- הניסיונות שנכשלו, ומה כדאי לבדוק.
+
+רק אדם מחיל תיקונים, ורק אחרי שקרא את הכרטיסים:
+
+```
+.venv\Scripts\python.exe main.py apply reports/login-20261027-120000.json --ids F1,F2
+```
+
+apply מסרב (קוד יציאה 3, עם סיבה) במקרים האלה:
+- כרטיס שאינו `ready`.
+- קובץ שהשתנה מאז ה־review.
+- שינויים חופפים.
+- עותק משולב שלא עובר את הבדיקות.
+
+אם הכל עובר, הוא כותב את הקובץ, מדפיס את ה־diff ויוצא עם 0. הוא אף פעם לא עושה commit.
+
 ### מגבלות זמן
 
 - `HTTP_TIMEOUT` (30 שניות) הוא גבול קשיח לבקשה שלמה למודל, גם אם השרת שולח בייטים לאט.
-- `RUN_DEADLINE_SECONDS` (300 שניות) הוא גבול לכל הרצה של `main.py`. כשהוא עובר, אף סוכן לא מתחיל צעד חדש,
+- `RUN_DEADLINE_SECONDS` (300 שניות, ו־`REVIEW_DEADLINE_SECONDS` = 600 ל־`review`) הוא גבול לכל הרצה של `main.py`.
+- `MAX_REQUESTS_PER_RUN`: לכל היותר 20 בקשות ל־OpenRouter בהרצה אחת. כשהוא עובר, אף סוכן לא מתחיל צעד חדש,
   הפלט כולל `run_deadline` עם רשימת מה שלא נעשה, וקוד היציאה הוא 2.
 - עם `--trace` כל צעד מודפס ל־stderr ברגע שהוא קורה (שורות שמתחילות ב־`[trace] `), והמסלול המלא מודפס בסוף.
 - בהתחלה האפליקציה מוחקת תיקיות `run-*` ב־`.work/` שנשארו מהרצה שנעצרה ושגילן מעל שעה.

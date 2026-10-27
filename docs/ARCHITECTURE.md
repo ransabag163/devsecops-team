@@ -4,12 +4,15 @@
 
 שלושה סוכנים עובדים בתור: **pen_tester** מוצא חולשות, **developer** מציע תיקון קטן כ־diff,
 **tester** בודק את התיקון על עותק. אדם מחליט מה להחיל. אף סוכן לא כותב לקובץ המקורי.
+את ריצת הצוות מנהל `orchestrator.py`, גרף של LangGraph (סעיף 1א). רק אדם יכול לכתוב לקובץ, עם `main.py apply` (סעיף 1ב).
 
 עיקרון מרכזי: **המודל בוחר, האפליקציה אוכפת.** המודל רק מחזיר פעולת JSON אחת בכל צעד
 (`tool`, `final` או `clarify`). האפליקציה בודקת כל פעולה לפני שהיא רצה, וכל ריצה נגמרת באחד
 הסטטוסים `final`, `clarify`, `budget_exhausted` או `invalid_action`.
 
-## 1. ריצה אחת מלאה
+## 1. הסוכנים, הספקים והכלים
+
+התרשים מראה מעבר אחד על הקובץ (`main.py <file> --verify`). ב־`review` אותו מסלול חוזר עד 3 פעמים לכל ממצא (סעיף 1א).
 
 ```mermaid
 flowchart TD
@@ -45,6 +48,82 @@ flowchart TD
 - את המודל של כל ספק אפשר להחליף ב־`.env`: `GROQ_MODEL`, `GEMINI_MODEL`, `OPENROUTER_MODEL`.
 - ההרשאות לכלים מוגדרות ב־`ALLOWLIST` שב־`tools/registry.py`.
 
+## 1א. ריצת הצוות: הגרף של `main.py review`
+
+את התרשים הזה צייר LangGraph עצמו מהקוד, עם `orchestrator.graph.get_graph().draw_mermaid()`
+(הפונקציה `draw_mermaid` ב־`orchestrator.py`). קו מלא הוא edge רגיל, וקו מקווקו הוא conditional edge עם התווית שלו.
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	scan(scan)
+	next_finding(next_finding)
+	develop(develop)
+	verify(verify)
+	report(report)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> scan;
+	develop -. &nbsp;skipped or 3 attempts: needs_you&nbsp; .-> next_finding;
+	develop -. &nbsp;stop&nbsp; .-> report;
+	develop -. &nbsp;proposed&nbsp; .-> verify;
+	next_finding -. &nbsp;a finding&nbsp; .-> develop;
+	next_finding -. &nbsp;none left or deadline&nbsp; .-> report;
+	scan -. &nbsp;real findings&nbsp; .-> next_finding;
+	scan -. &nbsp;none or error&nbsp; .-> report;
+	verify -. &nbsp;retry, under 3 attempts&nbsp; .-> develop;
+	verify -. &nbsp;approve: ready, or needs_you&nbsp; .-> next_finding;
+	verify -. &nbsp;stop&nbsp; .-> report;
+	report --> __end__;
+	develop -. &nbsp;rejected, try again&nbsp; .-> develop;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+```
+
+**ארבעה מושגים של LangGraph:**
+- **State:** מילון אחד שכל הריצה חולקת (`ReviewState`). כל צומת קורא אותו ומחזיר רק את המפתחות שהוא משנה.
+- **Node (צומת):** צעד אחד בריצה, פונקציה רגילה. כל צומת מפעיל לכל היותר סוכן אחד.
+- **Edge (קשת):** "אחרי הצומת הזה, עבור לצומת ההוא", למשל `START → scan`.
+- **Conditional edge (קשת מותנית):** פונקציה קטנה שמסתכלת על ה־State ומחזירה לאן להמשיך. היא רק בוחרת, ולא משנה את ה־State.
+
+**מה כל צומת עושה:**
+- **`scan`:** מריץ את pen_tester. ממצאי `real` נכנסים לתור.
+- **`next_finding`:** לוקח את הממצא הבא, ומריץ פעם אחת את טסט ה־attack של החוק שלו על עותק של המקור בלי שינוי. זו הראיה של "לפני". הצפי הוא שהטסט ייכשל, כלומר שההתקפה תצליח.
+- **`develop`:** ניסיון אחד של developer. מהניסיון השני ואילך הוא מקבל את ה־feedback ואת הניסיונות הקודמים כ־DATA.
+- **`verify`:** tester בודק את ההצעה. ‏`approve` יוצר כרטיס `ready`. ‏`retry`, כשיש פחות מ־3 ניסיונות, מחזיר ל־`develop`. ‏`human`, או 3 ניסיונות שנכשלו, יוצר כרטיס `needs_you`.
+- **`report`:** בונה את הדוח: הכרטיסים, מה שלא נעשה, ה־sha256 של המקור ומספר הבקשות לכל מודל.
+
+הסוכנים לא יודעים שיש גרף. הגרף רק קובע את הסדר, וכל הכללים נאכפים עדיין על ידי הסוכנים והאפליקציה.
+רק `orchestrator.py` מייבא את LangGraph.
+
+## 1ב. review ואז apply
+
+```mermaid
+flowchart TD
+    R["main.py review samples/login.py"] --> G["הגרף של LangGraph<br/>scan → next_finding → develop ⇄ verify → report"]
+    G --> C["כרטיסי החלטה<br/>reports/login-TIMESTAMP.json + .md<br/>קודם needs_you, אחר כך ready"]
+    C --> H["👤 אדם קורא את ה־.md"]
+    H --> A["main.py apply report.json --ids F1,F2"]
+    A --> K1{"כל הכרטיסים ready?<br/>ה־sha256 זהה?<br/>אין חפיפה בין השינויים?"}
+    K1 -->|"לא"| X["סירוב עם סיבה<br/>קוד יציאה 3"]
+    K1 -->|"כן"| W["עותק משולב ב־.work/<br/>rescan + כל טסטי works<br/>+ טסטי attack של החוקים שנבחרו"]
+    W -->|"משהו נכשל"| X
+    W -->|"הכל עבר"| OK["כותב את הקובץ, מדפיס diff משולב<br/>בלי commit · קוד יציאה 0"]
+```
+
+**מה יש בכל כרטיס:**
+- id, ‏CWE והחוק, הקובץ והשורה.
+- הבעיה בשורה אחת, ונימוק ה־pen_tester.
+- טסט ה־attack לפני ואחרי, וה־diff הסופי.
+- הבדיקות: `closed`, ממצאים חדשים, works ו־attack.
+- מספר הניסיונות, וה־feedback של הניסיונות שנכשלו.
+- "שים לב": ההערה של ה־tester לאדם, ומה שהאפליקציה לא יכלה לבדוק.
+
 ## 2. תיקיות וייבואים
 
 כל חץ אומר "מייבא את". רק ייבואים בתוך הפרויקט, בלי הספרייה הסטנדרטית.
@@ -56,6 +135,8 @@ flowchart LR
         config["config.py"]
         state["state.py"]
         deadline["deadline.py"]
+        orchestrator["orchestrator.py<br/>(רק כאן LangGraph)"]
+        reports["reports.py"]
     end
 
     subgraph AGENTS["agents/"]
@@ -81,10 +162,16 @@ flowchart LR
         patch["patch_tools.py"]
         verify["verify_tools.py"]
         workspace["workspace.py"]
+        apply_fixes["apply_fixes.py"]
     end
 
     main --> config & deadline & pen_tester & developer & tester
     main --> llm_pen & llm_dev & llm_tst & scripted & workspace
+    main --> orchestrator & reports & apply_fixes
+
+    orchestrator --> reports & verify & workspace
+    reports --> config
+    apply_fixes --> reports & patch & verify & workspace
 
     base_agent --> config & llm_adapter & registry
     pen_tester --> base_agent & state & config
@@ -112,7 +199,9 @@ flowchart LR
 
 | קובץ | מה הוא עושה | בעלים |
 |---|---|---|
-| `main.py` | נקודת הכניסה: מריץ את הסוכנים לפי הדגלים, מדפיס את הדוחות ומחזיר קוד יציאה. | ⚙️ |
+| `main.py` | נקודת הכניסה: `review`, ‏`apply` והמעבר הבודד הישן. מדפיס את הדוחות ומחזיר קוד יציאה. | ⚙️ |
+| `orchestrator.py` | גרף ה־LangGraph של `review`: הצמתים, הקשתות המותנות, עד 3 ניסיונות לכל ממצא והכרטיסים. | ⚙️ |
+| `reports.py` | בונה את כרטיסי ההחלטה וכותב אותם ל־`reports/` כקובצי `.json` ו־`.md`, עם ה־sha256 של המקור. | ⚙️ |
 | `config.py` | כל ההגדרות: ספקים, מגבלות צעדים וזמן, תיקיות, וטעינת `.env` בלי להדפיס אותו. | ⚙️ |
 | `state.py` | צורות הנתונים שהסוכנים מחזירים (ממצא, דוח, הצעה, אימות), עם בדיקת סטטוסים. | ⚙️ |
 | `deadline.py` | מגבלת זמן אחת לכל ריצה של `main.py`, שכל הסוכנים והלקוח בודקים. | ⚙️ |
@@ -132,9 +221,10 @@ flowchart LR
 | `tools/__init__.py` | קובץ ריק שהופך את `tools/` לחבילה. | ⚙️ |
 | `tools/registry.py` | הדרך היחידה להריץ כלי: allowlist לכל סוכן, טיפוסים מדויקים ונתיבים בתוך הפרויקט. | ⚙️ |
 | `tools/analyze_code.py` | ניתוח סטטי עם `ast` לשלושה חוקים: CWE-89, CWE-798 ו־CWE-78. tester משתמש בו גם ב־`rescan`. | 🔴 |
-| `tools/patch_tools.py` | `read_snippet` ו־`make_diff`, שעובדים על עותק בזיכרון. `apply_change` משותף גם ליצירת העותקים. | 🔵 |
+| `tools/patch_tools.py` | `read_snippet` ו־`make_diff`, שעובדים על עותק בזיכרון. `apply_changes` משותף גם ליצירת העותקים ול־apply, ומסרב לשינויים חופפים. | 🔵 |
 | `tools/verify_tools.py` | `rescan`, `run_behavior_tests`, ואיסוף תוצאות הבדיקות מתוך תוצאות הכלים. | 🟢 |
-| `tools/workspace.py` | יוצר ומוחק עותקים ב־`.work/run-<id>/`, כולל ניקוי תיקיות ישנות, עם בדיקת נתיב. | 🟢 |
+| `tools/apply_fixes.py` | ‏`main.py apply`: בודק את השינויים שנבחרו יחד על עותק משולב, ורק אם הכל עובר כותב את הקובץ. רק אדם מריץ אותו, והוא לא ב־registry. | ⚙️ |
+| `tools/workspace.py` | יוצר ומוחק עותקים ב־`.work/run-<id>/`: עם שינוי אחד, עם כמה שינויים, או בלי שינוי (לראיית "לפני"). כולל ניקוי תיקיות ישנות, עם בדיקת נתיב. | 🟢 |
 | `samples/login.py` | קובץ דוגמה עם שלוש חולשות ידועות. | 🧪 |
 | `samples/injection.py` | קובץ דוגמה עם shell injection והערה שמנסה לשכנע את המודל להתעלם. | 🧪 |
 | `samples/clean.py` | קובץ דוגמה בלי חולשות. | 🧪 |
@@ -146,7 +236,7 @@ flowchart LR
 | `samples/behavior/test_login_attack.py` | שלוש ההתקפות על login.py, אחת לכל חוק: נכשלות על המקור ועוברות על תיקון טוב. | 🧪 |
 | `samples/behavior/test_injection_works.py` | ההתנהגות הרגילה של injection.py. | 🧪 |
 | `samples/behavior/test_injection_attack.py` | ההתקפה על injection.py. | 🧪 |
-| `tests/conftest.py` | חוסם קריאות API אמיתיות, המתנה אמיתית, ושימוש ב־`.work` האמיתי בכל הטסטים. | 🧪 |
+| `tests/conftest.py` | חוסם קריאות API אמיתיות, המתנה אמיתית, ושימוש ב־`.work` וב־`reports` האמיתיים בכל הטסטים. | 🧪 |
 | `tests/test_agent.py` | טסטים ללולאת הסוכן ולסטטוסים. | 🧪 |
 | `tests/test_analyze_code.py` | טסטים לחוקי הניתוח הסטטי. | 🧪 |
 | `tests/test_behavior_samples.py` | מוכיח ש־works עובר ו־attack נכשל על המקור, ושניהם עוברים על תיקון טוב. | 🧪 |
@@ -156,6 +246,8 @@ flowchart LR
 | `tests/test_llm_adapter.py` | טסטים ללקוח ה־HTTP: retry, מרווח, timeout קשיח ושגיאות. | 🧪 |
 | `tests/test_llm_developer.py` | טסטים למודל ה־LLM של developer, עם לקוח מזויף. | 🧪 |
 | `tests/test_llm_pen_tester.py` | טסטים למודל ה־LLM של pen_tester, עם לקוח מזויף. | 🧪 |
+| `tests/test_orchestrator.py` | טסטים לגרף: retry ואז approve, 3 ניסיונות, הצעה חוזרת, deadline, סדר הכרטיסים ושדותיהם, ו־review שלא משנה את `samples/`. | 🧪 |
+| `tests/test_apply.py` | טסטים ל־apply על עותק בתוך `.work/`: כל הסירובים, וכתיבה של הקובץ שנבחר בלבד. | 🧪 |
 | `tests/test_main.py` | טסטים לשורת הפקודה: דגלים, קודי יציאה, trace, ומפתחות שלא מופיעים בפלט. | 🧪 |
 | `tests/test_models.py` | טסטים למודל מבוסס החוקים של pen_tester. | 🧪 |
 | `tests/test_patch_tools.py` | טסטים ל־`read_snippet` ול־`make_diff`, כולל hash של הקובץ המקורי. | 🧪 |
@@ -165,13 +257,15 @@ flowchart LR
 | `tests/test_tester_models.py` | טסטים למודלים של tester ולאיסוף הבדיקות. | 🧪 |
 | `tests/test_verify_tools.py` | טסטים לעותקים, ל־`rescan`, ל־`run_behavior_tests`, לסביבה ול־timeout. | 🧪 |
 | `pytest.ini` | מגדיר ש־pytest יריץ רק את `tests/` ויוכל לייבא מודולים משורש הפרויקט. | ⚙️ |
-| `requirements.txt` | התלות היחידה: `pytest`. | ⚙️ |
-| `.gitignore` | מונע מ־git לשמור את `.env`, ‏`.venv`, ‏`.work/`, ‏`.idea/` ו־`.claude/tmp/`. | ⚙️ |
+| `requirements.txt` | התלויות: `pytest`, ו־`langgraph==1.2.18` בגרסה נעולה. | ⚙️ |
+| `.gitignore` | מונע מ־git לשמור את `.env`, ‏`.venv`, ‏`.work/`, ‏`reports/`, ‏`.idea/` ו־`.claude/tmp/`. | ⚙️ |
 | `README.md` | הוראות התקנה והרצה בעברית. | ⚙️ |
 | `CLAUDE.md` | הכללים של הפרויקט ל־Claude. | ⚙️ |
 | `docs/ARCHITECTURE.md` | המסמך הזה. | ⚙️ |
 
 ## 4. איך ריצה אחת עובדת
+
+### מעבר בודד
 
 הפקודה: `main.py samples/login.py --verify --model llm --trace`
 
@@ -197,6 +291,19 @@ flowchart LR
    קוד היציאה הוא 1, כי יש ממצאים אמיתיים. בריצה האמיתית זה לקח 141 שניות, ושלושת התיקונים אושרו.
 7. **אדם.** הקובץ `samples/login.py` לא השתנה. האדם קורא את ה־diff ואת האימות, ומחליט אם להחיל.
 
+### ריצת הצוות
+
+הפקודה: `main.py review samples/login.py --model llm --trace`
+
+1. **התחלה.** שעון של 600 שניות. תקרה של 20 בקשות ל־OpenRouter.
+2. **`scan`.** pen_tester מסמן ממצאים, בדיוק כמו במעבר הבודד.
+3. **`next_finding`.** לכל ממצא `real`, טסט ה־attack רץ קודם על עותק של המקור, והצפי הוא שייכשל.
+4. **`develop` ו־`verify`.** developer מציע, ו־tester בודק על עותק חדש.
+   - אם ה־tester מחזיר `retry`, ה־developer מנסה שוב עם ה־feedback, עד 3 ניסיונות.
+   - הצעה זהה לניסיון קודם נדחית ונספרת כניסיון שנכשל.
+5. **`report`.** הכרטיסים נכתבים ל־`reports/login-<זמן>.json` ול־`.md`: קודם `needs_you`, אחר כך `ready`.
+6. **אדם.** קורא את ה־`.md`, ואם הוא רוצה מריץ `main.py apply <json> --ids ...`. apply בודק שוב הכל יחד על עותק, ורק אז כותב.
+
 ## 5. מה האפליקציה אוכפת
 
 הכללים האלה נמצאים בקוד, לא ב־prompt, ולכן הם חלים גם כשהמודל לא מציית.
@@ -214,6 +321,7 @@ flowchart LR
   - ההצעה חייבת להיות לממצא הנוכחי, בסטטוס `proposed` או `skipped`, ו־`skipped` חייב הסבר.
   - השינוי חייב להיות עד 10 שורות מהממצא, עד 15 שורות מקוריות ו־30 חדשות, והקוד חייב לעבור `ast.parse`.
   - ה־diff נבנה מחדש על ידי האפליקציה. diff שהמודל כתב לא נמצא בשימוש.
+  - הצעה זהה לניסיון קודם על אותו ממצא נדחית (`invalid_action`).
 - **tester:**
   - `approve` רק אם `closed` הוא true, אין `new_findings`, ו־works ו־attack שניהם `passed`, לפי תוצאות הכלים בלבד.
   - `retry` חייב feedback.
@@ -222,13 +330,24 @@ flowchart LR
 - **הקובץ המקורי:** אף כלי לא כותב אליו. עותקים נוצרים רק ב־`.work/run-<id>/`, ונמחקים רק אחרי בדיקה שהם בתוך `WORK_DIR` ושהשם שלהם הוא `run-<8 hex>`.
 - **טסטי ההתנהגות:**
   - רצים בתהליך נפרד עם timeout של 30 שניות.
-  - מקבלים סביבת allowlist בלבד: `PATH`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`, `TEMP`/`TMP` בתוך תיקיית הריצה, `SAMPLE_UNDER_TEST` ו־`PYTHONDONTWRITEBYTECODE`.
+  - מקבלים סביבת allowlist בלבד: `PATH`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`, `TEMP`/`TMP` בתוך תיקיית הריצה, `SAMPLE_UNDER_TEST`, `PYTHONDONTWRITEBYTECODE` ו־`PYTEST_DISABLE_PLUGIN_AUTOLOAD`.
+  - רצים בלי plugins של צד שלישי ל־pytest.
 - **בקשות למודל:**
   - timeout קשיח של 30 שניות לבקשה שלמה.
   - retry רק על timeout ו־429/500/502/503/504, לכל היותר פעמיים.
   - מרווח מינימלי בין בקשות: 4 שניות ל־Gemini ו־3 שניות ל־OpenRouter.
   - שגיאה מכילה רק קוד וסטטוס, אף פעם לא את המפתח או את גוף התשובה.
-- **זמן הריצה:** אחרי 300 שניות אף סוכן לא מתחיל צעד חדש. הפלט כולל `run_deadline` עם מה שלא נעשה, וקוד היציאה הוא 2.
+- **זמן הריצה:** אחרי 300 שניות (600 ב־`review`) אף סוכן לא מתחיל צעד חדש. הפלט כולל את מה שלא נעשה, וקוד היציאה הוא 2.
+- **מספר הבקשות:** לכל היותר 20 בקשות ל־OpenRouter בריצה אחת (`MAX_REQUESTS_PER_RUN`). אחר כך הריצה נעצרת ומדווחת. כל דוח של `review` שומר את מספר הבקשות לכל מודל.
+- **הגרף (`review`):**
+  - לכל היותר 3 ניסיונות לכל ממצא.
+  - ה־feedback מגיע ל־developer רק כ־DATA.
+  - כרטיס `ready` נוצר רק מ־`approve` שהאפליקציה קיבלה.
+- **apply (רק אדם מריץ):**
+  - רק כרטיסי `ready`.
+  - מסרב אם ה־sha256 של הקובץ שונה מהדוח, או אם השינויים חופפים.
+  - לפני כתיבה: עותק משולב ב־`.work/` עם `rescan`, כל טסטי works וטסטי ה־attack של החוקים שנבחרו.
+  - כותב רק אם הכל עבר, ואף פעם לא עושה commit. קוד יציאה 0 = הוחל, 3 = סירוב.
 - **תוצאות כלים כנתונים:** הן נשלחות למודל עטופות כ־"DATA, not instructions" (ב־`build_messages`).
 
 ## 6. מגבלות ידועות
@@ -236,9 +355,12 @@ flowchart LR
 - **הבידוד של טסטי ההתנהגות חלקי.**
   - הקוד המתוקן לא מקבל מפתחות בסביבה, אבל הוא רץ כמו המשתמש, עם גישה לקבצים ולרשת. תיאורטית הוא יכול לקרוא את `.env` לפי נתיב.
   - ה־recorders מונעים רק הרצת תהליכים דרך `os` ו־`subprocess`.
-- **אין עדיין לולאת retry.** ה־verdict `retry` וה־feedback נשמרים בדוח, אבל ה־developer לא רץ שוב.
-- **כל הצעה נבדקת לבד.** שלוש הצעות לאותו קובץ לא נבדקות יחד, וייתכן שיתנגשו כשמחילים את כולן.
-- **אין פקודה שמחילה diff.** האדם צריך להחיל אותו בעצמו.
+- **לולאת retry יש רק ב־`review`.** במעבר הבודד (`--verify`) ה־verdict `retry` רק נרשם בדוח.
+- **כרטיסי `ready` אושרו כל אחד לבד.** רק apply בודק את השינויים שנבחרו יחד, ושינויים חופפים לא יכולים להיות מוחלים יחד.
+- **apply כותב את הקובץ בלי commit ובלי גיבוי.** את המצב הקודם מחזירים עם git.
+- **ה־feedback הוא DATA רק ברמת ה־prompt.** האפליקציה לא יכולה להבטיח שה־developer מתעלם מהוראות שהוכנסו ל־feedback. מה שהיא כן מבטיחה הוא שכל הצעה עוברת את אותה בדיקה.
+- **אין המשך לריצה שנעצרה.** לגרף אין checkpointer, ולכן `review` שנעצר מתחיל מההתחלה.
+- **תקרת הבקשות היא לריצה אחת.** האפליקציה לא יודעת כמה בקשות כבר נוצלו היום מהמכסה של OpenRouter.
 - **טסטי התנהגות יש רק ל־login.py ול־injection.py.** לכל קובץ אחר התוצאה היא `not_available`, ולכן אין approve.
 - **הניתוח הסטטי מוגבל.** רק Python, רק שלושה חוקים, ובלי מעקב אחרי נתונים בין פונקציות.
 - **`closed` מבוסס על מיקום.** "ליד" פירושו עד 3 שורות מהשינוי או מהמקום החדש של הממצא.
