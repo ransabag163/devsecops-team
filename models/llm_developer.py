@@ -7,9 +7,8 @@ proposal and makes the diff itself (see agents/developer.py).
 import json
 
 import config
-from models.base import DecisionModel
 from models.llm_adapter import LLMClient
-from models.llm_common import PLAIN_TEXT_NOTE, build_messages, parse_action
+from models.llm_common import PLAIN_TEXT_NOTE, LLMDecisionModel, build_messages, parse_action
 
 SYSTEM_PROMPT = """\
 You are developer, a careful Python engineer. You fix ONE security finding in
@@ -48,7 +47,7 @@ Rules:
 """
 
 
-class LLMDeveloperModel(DecisionModel):
+class LLMDeveloperModel(LLMDecisionModel):
     def __init__(self, client=None):
         self.client = client or LLMClient(config.AGENT_PROVIDER["developer"])
 

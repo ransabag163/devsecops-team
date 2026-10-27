@@ -14,3 +14,7 @@ ACTION_KINDS = ("tool", "final", "clarify")
 class DecisionModel:
     def decide(self, state):
         raise NotImplementedError
+
+    def last_retries(self):
+        """Retries of the last decide() call, for the trace. Only LLM models retry."""
+        return []

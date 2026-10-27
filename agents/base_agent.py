@@ -35,10 +35,13 @@ class BaseAgent:
                 action = self.model.decide(state)
             except LLMError as e:
                 # The model could not be reached. Only the error code (and HTTP status) is kept.
-                trace.append({"step": step, "action": None, "error": str(e)})
+                entry = {"step": step, "action": None, "error": str(e)}
+                self.add_retries(entry)
+                trace.append(entry)
                 return {"status": "final", "result": self.finish_with_error(str(e), state), "trace": trace}
 
             entry = {"step": step, "action": action}
+            self.add_retries(entry)
             trace.append(entry)
 
             kind = action.get("kind") if isinstance(action, dict) else None
@@ -59,6 +62,12 @@ class BaseAgent:
             state["observations"].append(observation)
 
         return {"status": "budget_exhausted", "result": None, "trace": trace}
+
+    def add_retries(self, entry):
+        """Record the model call's retries (attempt and status only), if there were any."""
+        retries = self.model.last_retries()
+        if retries:
+            entry["retries"] = retries
 
     def check_final(self, action, state):
         """Return a short problem description if the final action breaks a rule, else None.

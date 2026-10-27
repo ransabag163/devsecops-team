@@ -2,6 +2,8 @@
 
 import json
 
+from models.base import DecisionModel
+
 MAX_RAW_REPLY = 500
 
 # Without this, gpt-oss on Groq put its answer in the reasoning field and left
@@ -45,3 +47,11 @@ def parse_action(reply):
     if not isinstance(action, dict):
         return {"kind": None, "error": "unparsable_json", "raw": reply[:MAX_RAW_REPLY]}
     return action
+
+
+class LLMDecisionModel(DecisionModel):
+    """A decision model that asks an LLM through self.client."""
+
+    def last_retries(self):
+        # Test clients may not have retries.
+        return list(getattr(self.client, "retries", []))

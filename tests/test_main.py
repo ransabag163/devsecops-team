@@ -40,7 +40,7 @@ def fake_transport(*contents, status=200):
 
     def transport(url, headers, body, timeout):
         text = json.dumps({"choices": [{"message": {"content": replies.pop(0)}}]}) if replies else ""
-        return status, text
+        return status, text, None
 
     return transport
 
@@ -143,7 +143,7 @@ def route_by_provider(groq_replies, gemini_replies):
 
     def transport(url, headers, body, timeout):
         queue = next(q for host, q in queues.items() if host in url)
-        return 200, json.dumps({"choices": [{"message": {"content": queue.pop(0)}}]})
+        return 200, json.dumps({"choices": [{"message": {"content": queue.pop(0)}}]}), None
 
     return transport
 

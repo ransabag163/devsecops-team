@@ -32,6 +32,9 @@ PROVIDERS = {
     },
 }
 
+# Minimum seconds between two requests to the same provider (Gemini's free tier is easy to overload).
+MIN_REQUEST_INTERVAL = {"gemini": 4.0, "groq": 0.0}
+
 # Which provider each agent uses.
 AGENT_PROVIDER = {
     "pen_tester": "groq",

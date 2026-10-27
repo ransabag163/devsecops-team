@@ -5,9 +5,8 @@ The LLM only proposes one JSON action per step. The agent checks every action
 """
 
 import config
-from models.base import DecisionModel
 from models.llm_adapter import LLMClient
-from models.llm_common import PLAIN_TEXT_NOTE, build_messages, parse_action
+from models.llm_common import PLAIN_TEXT_NOTE, LLMDecisionModel, build_messages, parse_action
 
 SYSTEM_PROMPT = """\
 You are pen_tester, a security reviewer for Python code. You work in steps.
@@ -38,7 +37,7 @@ Rules:
 """
 
 
-class LLMPenTesterModel(DecisionModel):
+class LLMPenTesterModel(LLMDecisionModel):
     def __init__(self, client=None):
         self.client = client or LLMClient(config.AGENT_PROVIDER["pen_tester"])
 
