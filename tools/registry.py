@@ -8,6 +8,7 @@ from pathlib import Path
 
 from tools.analyze_code import analyze_code
 from tools.patch_tools import make_diff, read_snippet
+from tools.verify_tools import rescan, run_behavior_tests
 
 # Every tool, with the exact arguments it accepts and their types.
 TOOLS = {
@@ -20,12 +21,16 @@ TOOLS = {
         "func": make_diff,
         "args": {"file_path": str, "start_line": int, "end_line": int, "replacement": str},
     },
+    # copy_id names a run folder in WORK_DIR; the tools refuse anything else.
+    "rescan": {"func": rescan, "args": {"copy_id": str}},
+    "run_behavior_tests": {"func": run_behavior_tests, "args": {"copy_id": str}},
 }
 
 # Which tools each agent may use.
 ALLOWLIST = {
     "pen_tester": {"analyze_code"},
     "developer": {"read_snippet", "make_diff"},
+    "tester": {"rescan", "run_behavior_tests"},
 }
 
 # Arguments that hold a file path and must stay inside the project.

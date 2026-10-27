@@ -23,9 +23,13 @@ class Developer(BaseAgent):
         """Run the loop once per real finding. false_positive findings are never sent."""
         file_path = findings_report["file"]
         real = [f for f in findings_report["findings"] if f["verdict"] == "real"]
-        proposals, problems, runs = [], [], []
+        proposals, problems, runs, not_done = [], [], [], []
 
-        for finding in real:
+        for index, finding in enumerate(real):
+            if self.out_of_time():
+                not_done = [f["id"] for f in real[index:]]
+                problems.append("not done (run deadline): " + ", ".join(not_done))
+                break
             run = self.run({"file_path": file_path, "finding": finding, "actions": [], "observations": []})
             runs.append({"finding_id": finding["id"], "status": run["status"], "trace": run["trace"]})
 
@@ -34,14 +38,16 @@ class Developer(BaseAgent):
                 continue
             if "error" in run["result"]:  # the model itself could not be reached
                 report = FixReport(file_path, "input_error", proposals, run["result"]["error"])
-                return {"status": "final", "result": report.to_dict(), "runs": runs}
+                return {"status": "final", "result": report.to_dict(), "runs": runs, "not_done": not_done}
             proposals.append(PatchProposal(**run["result"]))
 
         status = "fixes" if any(p.status == "proposed" for p in proposals) else "no_fixes"
         report = FixReport(file_path, status, proposals, "; ".join(problems) or None)
         # "final" only when every finding's run ended in final; else the first failure.
         overall = next((r["status"] for r in runs if r["status"] != "final"), "final")
-        return {"status": overall, "result": report.to_dict(), "runs": runs}
+        if not_done:
+            overall = "budget_exhausted"
+        return {"status": overall, "result": report.to_dict(), "runs": runs, "not_done": not_done}
 
     def check_final(self, action, state):
         proposal = action.get("proposal")

@@ -55,3 +55,6 @@ class LLMDecisionModel(DecisionModel):
     def last_retries(self):
         # Test clients may not have retries.
         return list(getattr(self.client, "retries", []))
+
+    def set_deadline(self, deadline):
+        self.client.deadline = deadline

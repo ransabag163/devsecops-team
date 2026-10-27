@@ -224,3 +224,6 @@ __marimo__/
 
 # One-off local scripts (for example the Groq model check)
 .claude/tmp/
+
+# The tester's patched copies (run folders)
+.work/

@@ -1,11 +1,23 @@
+import hashlib
 import json
+import re
 
 import pytest
 
+import config
 import models.llm_adapter
-from main import main
+from main import TRACE_PREFIX, main
 
 FAKE_KEY = "fake-key-for-tests-123"
+
+
+def final_trace(err):
+    """The full trace printed at the end, without the live "[trace] " lines."""
+    return json.loads("\n".join(line for line in err.splitlines() if not line.startswith(TRACE_PREFIX)))
+
+
+def live_steps(err):
+    return [json.loads(line[len(TRACE_PREFIX):]) for line in err.splitlines() if line.startswith(TRACE_PREFIX)]
 
 
 @pytest.mark.parametrize("file_path, code, status", [
@@ -29,7 +41,7 @@ def test_trace_flag_prints_the_trace(capsys):
     captured = capsys.readouterr()
 
     assert json.loads(captured.out)["file"] == "samples/login.py"
-    assert [entry["step"] for entry in json.loads(captured.err)] == [1, 2]
+    assert [entry["step"] for entry in final_trace(captured.err)] == [1, 2]
 
 
 # ---------- --model llm, always with a fake transport ----------
@@ -131,19 +143,24 @@ def test_fix_on_an_input_error_does_not_run_the_developer(capsys):
 
 def test_fix_trace_has_both_agents(capsys):
     main(["samples/login.py", "--fix", "--trace"])
-    trace = json.loads(capsys.readouterr().err)
+    trace = final_trace(capsys.readouterr().err)
 
     assert [entry["step"] for entry in trace["pen_tester"]] == [1, 2]
     assert [run["finding_id"] for run in trace["developer"]] == ["F1", "F2", "F3"]
 
 
-def route_by_provider(groq_replies, gemini_replies):
-    """A fake transport that answers per provider, so each agent gets its own replies."""
-    queues = {"api.groq.com": list(groq_replies), "googleapis.com": list(gemini_replies)}
+def route_by_provider(groq_replies, gemini_replies, openrouter_replies=()):
+    """A fake transport that answers per provider, so each agent gets its own replies.
+    A reply can be a function of the request body (the tester needs the copy_id from it)."""
+    queues = {"api.groq.com": list(groq_replies), "googleapis.com": list(gemini_replies),
+              "openrouter.ai": list(openrouter_replies)}
 
     def transport(url, headers, body, timeout):
         queue = next(q for host, q in queues.items() if host in url)
-        return 200, json.dumps({"choices": [{"message": {"content": queue.pop(0)}}]}), None
+        reply = queue.pop(0)
+        if callable(reply):
+            reply = reply(json.loads(body))
+        return 200, json.dumps({"choices": [{"message": {"content": reply}}]}), None
 
     return transport
 
@@ -197,3 +214,128 @@ def test_llm_fix_missing_gemini_key_exits_with_2(capsys, monkeypatch):
     fix_report = json.loads(capsys.readouterr().out)["fix_report"]
     assert fix_report["status"] == "input_error"
     assert fix_report["error"] == "missing_api_key"
+
+
+# ---------- --verify ----------
+
+OPENROUTER_FAKE_KEY = "fake-openrouter-key-789"
+
+
+@pytest.fixture
+def work_dir(tmp_path, monkeypatch):
+    path = tmp_path / ".work"
+    monkeypatch.setattr(config, "WORK_DIR", path)
+    return path
+
+
+def file_hash(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_verify_implies_fix_and_approves_a_good_fix(capsys, work_dir):
+    login = config.PROJECT_ROOT / "samples" / "login.py"
+    before = file_hash(login)
+
+    code = main(["samples/login.py", "--verify"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert code == 1
+    assert output["fix_report"]["status"] == "fixes"
+    [verification] = output["verification_report"]["verifications"]
+    assert (verification["finding_id"], verification["verdict"]) == ("F1", "approve")
+    assert file_hash(login) == before
+    assert list(work_dir.iterdir()) == []  # the run folder was removed
+
+
+def test_keep_work_keeps_the_run_folder(capsys, work_dir):
+    main(["samples/login.py", "--verify", "--keep-work"])
+
+    [folder] = work_dir.iterdir()
+    assert folder.name.startswith("run-") and (folder / "login.py").is_file()
+
+
+def test_verify_trace_has_three_agents(capsys, work_dir):
+    main(["samples/login.py", "--verify", "--trace"])
+    trace = final_trace(capsys.readouterr().err)
+
+    assert set(trace) == {"pen_tester", "developer", "tester"}
+    assert [run["finding_id"] for run in trace["tester"]] == ["F1"]
+
+
+def fake_tester_tool(name):
+    def reply(body):
+        copy_id = re.search(r"run-[0-9a-f]{8}", body["messages"][1]["content"]).group()
+        return json.dumps({"kind": "tool", "name": name, "args": {"copy_id": copy_id}})
+    return reply
+
+
+def fake_tester_final(verdict):
+    return json.dumps({"kind": "final", "text": "done",
+                       "verification": {"finding_id": "F1", "verdict": verdict, "feedback": ""}})
+
+
+def set_fake_keys(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", FAKE_KEY)
+    monkeypatch.setenv("GEMINI_API_KEY", GEMINI_FAKE_KEY)
+    monkeypatch.setenv("OPENROUTER_API_KEY", OPENROUTER_FAKE_KEY)
+
+
+def test_llm_verify_uses_three_providers_and_never_prints_keys(capsys, monkeypatch, work_dir):
+    set_fake_keys(monkeypatch)
+    tester = [fake_tester_tool("rescan"), fake_tester_tool("run_behavior_tests"), fake_tester_final("approve")]
+    use_transport(monkeypatch, route_by_provider(tool_then_final("real"), llm_fix_replies(), tester))
+
+    code = main(["samples/injection.py", "--verify", "--model", "llm", "--trace"])
+    captured = capsys.readouterr()
+    [verification] = json.loads(captured.out)["verification_report"]["verifications"]
+
+    assert code == 1
+    assert verification["verdict"] == "approve"
+    assert (verification["works"], verification["attack"]) == ("passed", "passed")
+    for key in (FAKE_KEY, GEMINI_FAKE_KEY, OPENROUTER_FAKE_KEY):
+        assert key not in captured.out
+        assert key not in captured.err
+
+
+def test_llm_verify_approve_without_checks_is_blocked_and_exits_with_2(capsys, monkeypatch, work_dir):
+    set_fake_keys(monkeypatch)
+    use_transport(monkeypatch, route_by_provider(tool_then_final("real"), llm_fix_replies(), [fake_tester_final("approve")]))
+
+    code = main(["samples/injection.py", "--verify", "--model", "llm"])
+    [verification] = json.loads(capsys.readouterr().out)["verification_report"]["verifications"]
+
+    assert code == 2
+    assert verification["verdict"] == "human"
+    assert verification["status"] == "invalid_action"
+
+
+def test_trace_prints_each_step_live_in_order(capsys, work_dir):
+    main(["samples/login.py", "--verify", "--trace"])
+    err = capsys.readouterr().err
+
+    steps = [(s["agent"], s["finding_id"], s["step"]) for s in live_steps(err)]
+    assert steps == [
+        ("pen_tester", None, 1), ("pen_tester", None, 2),
+        ("developer", "F1", 1), ("developer", "F1", 2), ("developer", "F1", 3),
+        ("developer", "F2", 1), ("developer", "F3", 1),
+        ("tester", "F1", 1), ("tester", "F1", 2), ("tester", "F1", 3),
+    ]
+    assert "observation" in live_steps(err)[0]  # a tool step is printed with its result
+    assert final_trace(err)["tester"][0]["finding_id"] == "F1"
+
+
+def test_live_steps_are_printed_before_the_next_step_starts(capsys, monkeypatch, work_dir):
+    from models.scripted import ScriptedTesterModel
+
+    seen = []
+    original = ScriptedTesterModel.decide
+
+    def decide(self, state):
+        seen.append(len(live_steps(capsys.readouterr().err)))  # what was printed so far
+        return original(self, state)
+
+    monkeypatch.setattr(ScriptedTesterModel, "decide", decide)
+    main(["samples/login.py", "--verify", "--trace"])
+
+    # Before the tester's first step, all 7 earlier steps were already printed; then one more each step.
+    assert seen == [7, 1, 1]

@@ -218,3 +218,67 @@ def test_groq_has_no_gap(key):
     client.chat([])
 
     assert sleep.waits == []
+
+
+def test_openrouter_url_and_default_model(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_KEY)
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+    transport = FakeTransport()
+
+    LLMClient("openrouter", transport).chat([])
+
+    call = transport.calls[0]
+    assert call["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert call["body"]["model"].endswith(":free")
+
+
+# ---------- a hard deadline for the whole request ----------
+
+class FakeClock:
+    def __init__(self, step=1.0):
+        self.now, self.step = 0.0, step
+
+    def __call__(self):
+        self.now += self.step
+        return self.now
+
+
+class TrickleResponse:
+    """A response that sends one byte per read and never ends (like a keep-alive space)."""
+    status = 200
+
+    def __init__(self, chunks=None):
+        self.chunks = chunks
+        self.reads = 0
+
+    def read1(self, size):
+        self.reads += 1
+        if self.chunks is None:
+            return b" "
+        return self.chunks.pop(0) if self.chunks else b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_a_trickling_response_hits_the_total_deadline():
+    from models.llm_adapter import http_post
+
+    response = TrickleResponse()
+    with pytest.raises(TimeoutError):
+        http_post("https://x", {}, b"{}", timeout=5, urlopen=lambda request, timeout: response, clock=FakeClock())
+
+    assert response.reads < 10  # stopped after about 5 seconds of fake time, not forever
+
+
+def test_a_body_in_chunks_is_joined():
+    from models.llm_adapter import http_post
+
+    response = TrickleResponse([b'{"a": ', b'"b"}'])
+    status, text, retry_after = http_post("https://x", {}, b"{}", timeout=5,
+                                          urlopen=lambda request, timeout: response, clock=FakeClock(0.1))
+
+    assert (status, text, retry_after) == (200, '{"a": "b"}', None)

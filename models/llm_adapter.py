@@ -22,6 +22,9 @@ DEFAULT_MODELS = {
     "groq": "openai/gpt-oss-120b",
     # The bigger Flash models timed out or returned 503 when tested; flash-lite answered in ~1.5s.
     "gemini": "gemini-3.1-flash-lite",
+    # A free model from a third family (Cohere), so the tester does not share the developer's blind spots.
+    # The free Nemotron endpoint returned 404 "Provider returned error" when tested.
+    "openrouter": "cohere/north-mini-code:free",
 }
 
 # Statuses that may pass if we wait (rate limit, server trouble). 400/401/403/404 never do.
@@ -34,7 +37,7 @@ MAX_RETRY_AFTER = 20
 
 class LLMError(Exception):
     """A model call failed. code is one of:
-    missing_api_key, http_error, timeout, bad_response."""
+    missing_api_key, http_error, timeout, bad_response, run_deadline."""
 
     def __init__(self, code, status=None):
         self.code = code
@@ -42,21 +45,47 @@ class LLMError(Exception):
         super().__init__(f"{code} ({status})" if status else code)
 
 
+READ_CHUNK = 65536
+
+
 def urllib_transport(url, headers, body, timeout):
     """Send one POST request. Returns (status, text, retry_after). Raises TimeoutError.
 
     retry_after is the raw Retry-After header of an error answer, or None.
     """
+    return http_post(url, headers, body, timeout)
+
+
+def http_post(url, headers, body, timeout, urlopen=urllib.request.urlopen, clock=time.monotonic):
+    """The real HTTP call behind urllib_transport. urlopen and clock can be replaced in tests.
+
+    timeout is a hard deadline for the whole request. The socket timeout alone
+    only limits each read, so a server that sends a byte now and then could
+    keep the request open forever.
+    """
+    deadline = clock() + timeout
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read().decode("utf-8"), None
+        with urlopen(request, timeout=timeout) as response:
+            return response.status, read_until(response, deadline, clock), None
     except urllib.error.HTTPError as e:
         return e.code, "", e.headers.get("Retry-After")
     except urllib.error.URLError as e:
         if isinstance(e.reason, (TimeoutError, socket.timeout)):
             raise TimeoutError() from None
         return 0, "", None
+
+
+def read_until(response, deadline, clock):
+    """Read the body in chunks. Raises TimeoutError once the clock passes the deadline."""
+    chunks = []
+    while True:
+        if clock() > deadline:
+            raise TimeoutError()
+        chunk = response.read1(READ_CHUNK)  # returns as soon as some bytes arrive
+        if not chunk:
+            return b"".join(chunks).decode("utf-8")
+        chunks.append(chunk)
 
 
 def real_sleep(seconds):
@@ -86,6 +115,8 @@ class LLMClient:
         self.last_request_end = None
         # The retries of the last chat() call: [{"attempt": 1, "status": 503}, ...]
         self.retries = []
+        # The run's Deadline, set by the agent. None means no run limit.
+        self.deadline = None
 
     @property
     def model(self):
@@ -124,9 +155,14 @@ class LLMClient:
         Returns the answer text, or raises the LLMError of the last attempt."""
         for attempt in range(1, len(RETRY_WAITS) + 2):
             self.wait_for_gap()
+            timeout = self.timeout
+            if self.deadline is not None:
+                if self.deadline.passed():
+                    raise LLMError("run_deadline")
+                timeout = min(timeout, self.deadline.remaining())  # never wait past the run deadline
             retry_after = None
             try:
-                status, text, retry_after = self.transport(url, headers, body, self.timeout)
+                status, text, retry_after = self.transport(url, headers, body, timeout)
                 error = None if status == 200 else LLMError("http_error", status)
             except TimeoutError:
                 error = LLMError("timeout")
@@ -137,8 +173,11 @@ class LLMClient:
             can_retry = error.code == "timeout" or error.status in RETRY_STATUSES
             if not can_retry or attempt > len(RETRY_WAITS):
                 raise error
+            wait = retry_wait(attempt, retry_after)
+            if self.deadline is not None and wait >= self.deadline.remaining():
+                raise error  # no time left for another attempt
             self.retries.append({"attempt": attempt, "status": error.status or error.code})
-            self.sleep(retry_wait(attempt, retry_after))
+            self.sleep(wait)
 
     def wait_for_gap(self):
         """Keep at least min_interval seconds between two requests of this client."""

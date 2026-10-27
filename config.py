@@ -12,11 +12,27 @@ MAX_STEPS = 4
 # The developer gets a fresh budget for each finding it fixes.
 DEVELOPER_MAX_STEPS = 5
 
+# The tester gets a fresh budget for each proposal it checks.
+TESTER_MAX_STEPS = 4
+
 # Files larger than this are not analyzed.
 MAX_FILE_BYTES = 200_000
 
-# Seconds to wait for a model API answer.
+# Seconds to wait for a model API answer: a hard limit for the whole request.
 HTTP_TIMEOUT = 30
+
+# Seconds for a whole main.py run. After that no agent starts another step.
+RUN_DEADLINE_SECONDS = 300
+
+# Run folders in WORK_DIR older than this are left over from a stopped run and removed on start.
+STALE_RUN_SECONDS = 3600
+
+# The tester's patched copies live in run-<id> folders here (git-ignored).
+WORK_DIR = PROJECT_ROOT / ".work"
+
+# The behavior tests of each sample, and how long one pytest run may take.
+BEHAVIOR_DIR = PROJECT_ROOT / "samples" / "behavior"
+BEHAVIOR_TIMEOUT = 30
 
 # OpenAI-compatible model providers. Keys and model names come from the environment.
 PROVIDERS = {
@@ -30,15 +46,21 @@ PROVIDERS = {
         "key_env": "GEMINI_API_KEY",
         "model_env": "GEMINI_MODEL",
     },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+    },
 }
 
 # Minimum seconds between two requests to the same provider (Gemini's free tier is easy to overload).
-MIN_REQUEST_INTERVAL = {"gemini": 4.0, "groq": 0.0}
+MIN_REQUEST_INTERVAL = {"gemini": 4.0, "groq": 0.0, "openrouter": 3.0}
 
 # Which provider each agent uses.
 AGENT_PROVIDER = {
     "pen_tester": "groq",
     "developer": "gemini",
+    "tester": "openrouter",
 }
 
 
