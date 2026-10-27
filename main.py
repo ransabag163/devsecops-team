@@ -23,6 +23,9 @@ from models.llm_pen_tester import LLMPenTesterModel
 from models.llm_tester import LLMTesterModel
 from models.scripted import ScriptedDeveloperModel, ScriptedPenTesterModel, ScriptedTesterModel
 
+# Live trace lines start with this, so the full trace at the end is easy to find.
+TRACE_PREFIX = "[trace] "
+
 # Each agent gets its own model class; each LLM model uses its own provider.
 MODELS = {
     "scripted": {"pen_tester": ScriptedPenTesterModel, "developer": ScriptedDeveloperModel,
@@ -47,6 +50,8 @@ def main(argv=None):
 
     def prepare(agent):
         agent.deadline = deadline
+        if args.trace:
+            agent.on_step = print_step
         return agent
 
     run = prepare(PenTester(models["pen_tester"]())).review(args.file_path)
@@ -92,6 +97,12 @@ def main(argv=None):
         # The trace goes to stderr, so stdout stays clean JSON for scripts.
         print(json.dumps(trace, indent=2, ensure_ascii=False), file=sys.stderr)
     return code
+
+
+def print_step(agent, finding_id, entry):
+    """With --trace, print each step to stderr as soon as it happens, on one line."""
+    line = {"agent": agent, "finding_id": finding_id, **entry}
+    print(TRACE_PREFIX + json.dumps(line, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
 def exit_code(run):
