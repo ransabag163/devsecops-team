@@ -85,7 +85,7 @@ def review_command(argv):
         return 2
     return 1 if report["cards"] else 0
 
-
+#apply ready fixes from a review report
 def apply_command(argv):
     parser = argparse.ArgumentParser(prog="main.py apply", description="Apply ready fixes from a review report.")
     parser.add_argument("report", help="the .json report written by main.py review")
