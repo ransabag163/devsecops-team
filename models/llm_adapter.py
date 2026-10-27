@@ -37,7 +37,7 @@ MAX_RETRY_AFTER = 20
 
 class LLMError(Exception):
     """A model call failed. code is one of:
-    missing_api_key, http_error, timeout, bad_response."""
+    missing_api_key, http_error, timeout, bad_response, run_deadline."""
 
     def __init__(self, code, status=None):
         self.code = code
@@ -115,6 +115,8 @@ class LLMClient:
         self.last_request_end = None
         # The retries of the last chat() call: [{"attempt": 1, "status": 503}, ...]
         self.retries = []
+        # The run's Deadline, set by the agent. None means no run limit.
+        self.deadline = None
 
     @property
     def model(self):
@@ -153,9 +155,14 @@ class LLMClient:
         Returns the answer text, or raises the LLMError of the last attempt."""
         for attempt in range(1, len(RETRY_WAITS) + 2):
             self.wait_for_gap()
+            timeout = self.timeout
+            if self.deadline is not None:
+                if self.deadline.passed():
+                    raise LLMError("run_deadline")
+                timeout = min(timeout, self.deadline.remaining())  # never wait past the run deadline
             retry_after = None
             try:
-                status, text, retry_after = self.transport(url, headers, body, self.timeout)
+                status, text, retry_after = self.transport(url, headers, body, timeout)
                 error = None if status == 200 else LLMError("http_error", status)
             except TimeoutError:
                 error = LLMError("timeout")
@@ -166,8 +173,11 @@ class LLMClient:
             can_retry = error.code == "timeout" or error.status in RETRY_STATUSES
             if not can_retry or attempt > len(RETRY_WAITS):
                 raise error
+            wait = retry_wait(attempt, retry_after)
+            if self.deadline is not None and wait >= self.deadline.remaining():
+                raise error  # no time left for another attempt
             self.retries.append({"attempt": attempt, "status": error.status or error.code})
-            self.sleep(retry_wait(attempt, retry_after))
+            self.sleep(wait)
 
     def wait_for_gap(self):
         """Keep at least min_interval seconds between two requests of this client."""

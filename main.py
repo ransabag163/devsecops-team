@@ -5,16 +5,19 @@ Usage:
     .venv\\Scripts\\python.exe main.py samples/login.py [--model scripted|llm] [--fix] [--verify] [--keep-work] [--trace]
 
 Exit code: 0 = no real findings, 1 = at least one real finding,
-           2 = error, a run that did not end in final, or a failed developer or tester run.
+           2 = error, a run that did not end in final, a failed developer or tester run,
+               or the run deadline (config.RUN_DEADLINE_SECONDS) passed before the work was done.
 """
 
 import argparse
 import json
 import sys
 
+import config
 from agents.developer import Developer
 from agents.pen_tester import PenTester
 from agents.tester import Tester
+from deadline import Deadline
 from models.llm_developer import LLMDeveloperModel
 from models.llm_pen_tester import LLMPenTesterModel
 from models.llm_tester import LLMTesterModel
@@ -39,8 +42,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args.fix = args.fix or args.verify
     models = MODELS[args.model]
+    deadline = Deadline(config.RUN_DEADLINE_SECONDS)
+    not_done = []
 
-    run = PenTester(models["pen_tester"]()).review(args.file_path)
+    def prepare(agent):
+        agent.deadline = deadline
+        return agent
+
+    run = prepare(PenTester(models["pen_tester"]())).review(args.file_path)
     if run["status"] == "final":
         findings_output = run["result"]
     else:
@@ -52,20 +61,31 @@ def main(argv=None):
     else:
         fix_run = None
         if code != 2:  # only fix findings from a pen_tester run that worked
-            fix_run = Developer(models["developer"]()).fix(run["result"])
+            fix_run = prepare(Developer(models["developer"]())).fix(run["result"])
             if fix_run["status"] != "final" or fix_run["result"]["status"] == "input_error":
                 code = 2
+            not_done += [f"developer: {finding_id}" for finding_id in fix_run["not_done"]]
+        elif deadline.hit:
+            not_done.append("developer: all findings")
         output = {"findings_report": findings_output, "fix_report": fix_run and fix_run["result"]}
         trace = {"pen_tester": run["trace"], "developer": fix_run and fix_run["runs"]}
 
         if args.verify:
             verify_run = None
             if fix_run is not None:  # check whatever proposals the developer made
-                verify_run = Tester(models["tester"]()).verify(run["result"], fix_run["result"], args.keep_work)
+                verify_run = prepare(Tester(models["tester"]())).verify(run["result"], fix_run["result"], args.keep_work)
                 if verify_run["status"] != "final" or verify_run["result"]["status"] == "input_error":
                     code = 2
+                not_done += [f"tester: {finding_id}" for finding_id in verify_run["not_done"]]
+            elif deadline.hit:
+                not_done.append("tester: all proposals")
             output["verification_report"] = verify_run and verify_run["result"]
             trace["tester"] = verify_run and verify_run["runs"]
+
+    if deadline.hit:
+        # Something was stopped or skipped because the whole run took too long.
+        code = 2
+        output = {**output, "run_deadline": {"seconds": deadline.seconds, "not_done": not_done}}
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
     if args.trace:

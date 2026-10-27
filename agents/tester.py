@@ -23,11 +23,13 @@ class Tester(BaseAgent):
         """Run the loop once per proposed fix. Skipped proposals have nothing to check."""
         file_path = fix_report["file"]
         findings = {f["id"]: f for f in findings_report["findings"]}
-        verifications, runs = [], []
+        verifications, runs, not_done = [], [], []
+        proposed = [p for p in fix_report["proposals"] if p["status"] == "proposed"]
 
-        for proposal in fix_report["proposals"]:
-            if proposal["status"] != "proposed":
-                continue
+        for index, proposal in enumerate(proposed):
+            if self.out_of_time():
+                not_done = [p["finding_id"] for p in proposed[index:]]
+                break
             finding_id = proposal["finding_id"]
             copy = create_copy(file_path, findings[finding_id], proposal)
             if not copy["ok"]:
@@ -47,13 +49,16 @@ class Tester(BaseAgent):
 
             if run["status"] == "final" and "error" in run["result"]:  # the model itself could not be reached
                 report = VerificationReport(file_path, "input_error", verifications, run["result"]["error"])
-                return {"status": "final", "result": report.to_dict(), "runs": runs}
+                return {"status": "final", "result": report.to_dict(), "runs": runs, "not_done": not_done}
             verifications.append(_verification(finding_id, run, copy_id))
 
-        report = VerificationReport(file_path, "verified" if verifications else "no_proposals", verifications)
+        error = "not done (run deadline): " + ", ".join(not_done) if not_done else None
+        report = VerificationReport(file_path, "verified" if verifications else "no_proposals", verifications, error)
         # "final" only when every proposal's run ended in final; else the first failure.
         overall = next((r["status"] for r in runs if r["status"] != "final"), "final")
-        return {"status": overall, "result": report.to_dict(), "runs": runs}
+        if not_done:
+            overall = "budget_exhausted"
+        return {"status": overall, "result": report.to_dict(), "runs": runs, "not_done": not_done}
 
     def check_final(self, action, state):
         verification = action.get("verification")
