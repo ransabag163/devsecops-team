@@ -1,6 +1,6 @@
 import pytest
 
-from state import Finding, FindingsReport, FixReport, PatchProposal
+from state import Finding, FindingsReport, FixReport, PatchProposal, Verification, VerificationReport
 
 
 def test_report_to_dict_includes_findings():
@@ -34,5 +34,26 @@ def test_fix_report_to_dict_includes_proposals():
     lambda: FixReport("app.py", "done"),
 ])
 def test_unknown_fix_statuses_are_rejected(make):
+    with pytest.raises(ValueError):
+        make()
+
+
+def test_verification_report_to_dict():
+    verification = Verification("F1", True, [], "passed", "passed", "approve", "", "final")
+    report = VerificationReport("app.py", "verified", [verification])
+
+    data = report.to_dict()
+
+    assert data["verifications"][0] == {
+        "finding_id": "F1", "closed": True, "new_findings": [], "works": "passed",
+        "attack": "passed", "verdict": "approve", "feedback": "", "status": "final",
+    }
+
+
+@pytest.mark.parametrize("make", [
+    lambda: Verification("F1", True, [], "passed", "passed", "ship it", "", "final"),
+    lambda: VerificationReport("app.py", "done"),
+])
+def test_unknown_verdicts_and_statuses_are_rejected(make):
     with pytest.raises(ValueError):
         make()

@@ -95,6 +95,37 @@ def behavior_env(folder, sample_path):
     return env
 
 
+def collect_checks(actions, observations, copy_id):
+    """The latest result of each check on copy_id, taken from the tool observations only."""
+    checks = {"closed": None, "new_findings": None, "works": "not_run", "attack": "not_run", "errors": []}
+    for action, observation in zip(actions, observations):
+        if action.get("args", {}).get("copy_id") != copy_id:
+            continue  # a check on another copy says nothing about this proposal
+        if not observation.get("ok"):
+            checks["errors"].append(f"{action.get('name')}: {observation.get('error')}")
+        elif action.get("name") == "rescan":
+            checks["closed"], checks["new_findings"] = observation["closed"], observation["new_findings"]
+        elif action.get("name") == "run_behavior_tests":
+            checks["works"], checks["attack"] = observation["works"], observation["attack"]
+    return checks
+
+
+def failed_checks(checks):
+    """Every reason not to approve, as short sentences. Empty means all checks passed."""
+    problems = list(checks["errors"])
+    if checks["closed"] is None:
+        problems.append("rescan did not run")
+    elif not checks["closed"]:
+        problems.append("rescan still finds the weakness in or near the changed lines")
+    if checks["new_findings"]:
+        found = ", ".join(f"{f['rule']} on line {f['line']}" for f in checks["new_findings"])
+        problems.append(f"the fix adds new findings: {found}")
+    for kind in ("works", "attack"):
+        if checks[kind] != "passed":
+            problems.append(f"{kind} tests: {checks[kind]}")
+    return problems
+
+
 def _run_pytest(folder, env, args):
     command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
                "-c", "pytest.ini", "--rootdir", ".", *args]

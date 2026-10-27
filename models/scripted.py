@@ -4,11 +4,14 @@ ScriptedPenTesterModel trusts every rule match. Judging the context of a
 finding is what the real model adds in step 2.
 
 ScriptedDeveloperModel only fixes hardcoded_secret and skips the rest.
+
+ScriptedTesterModel runs both checks and approves only if all of them passed.
 """
 
 import ast
 
 from models.base import DecisionModel
+from tools.verify_tools import collect_checks, failed_checks
 
 
 class ScriptedPenTesterModel(DecisionModel):
@@ -143,3 +146,22 @@ def _imports_os(text):
     except (SyntaxError, IndexError):
         return False
     return isinstance(node, ast.Import) and any(alias.name == "os" for alias in node.names)
+
+
+class ScriptedTesterModel(DecisionModel):
+    """Step 1: rescan. Step 2: behavior tests. Step 3: approve, or retry with what failed."""
+
+    def decide(self, state):
+        copy_id = state["copy_id"]
+        observations = state.get("observations", [])
+
+        if len(observations) == 0:
+            return {"kind": "tool", "name": "rescan", "args": {"copy_id": copy_id}}
+        if len(observations) == 1:
+            return {"kind": "tool", "name": "run_behavior_tests", "args": {"copy_id": copy_id}}
+
+        problems = failed_checks(collect_checks(state["actions"], observations, copy_id))
+        verification = {"finding_id": state["finding"]["id"], "verdict": "approve", "feedback": ""}
+        if problems:
+            verification.update(verdict="retry", feedback="Fix these checks: " + "; ".join(problems) + ".")
+        return {"kind": "final", "text": f"Verdict: {verification['verdict']}.", "verification": verification}
