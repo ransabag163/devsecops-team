@@ -233,3 +233,44 @@ def test_rescan_a_change_far_from_the_finding_is_not_closed(work_dir):
     copy_id = create_copy("samples/login.py", SQL, docstring_only)["copy_id"]
 
     assert rescan(copy_id) == {"ok": True, "closed": False, "new_findings": []}
+
+
+# ---------- leftover run folders ----------
+
+def make_folder(work_dir, name, age_seconds):
+    import os
+    import time
+
+    folder = work_dir / name
+    folder.mkdir(parents=True)
+    old = time.time() - age_seconds
+    os.utime(folder, (old, old))
+    return folder
+
+
+def test_only_old_run_folders_are_removed(work_dir):
+    from tools.workspace import remove_stale_copies
+
+    make_folder(work_dir, "run-0000aaaa", 2 * 3600)   # old run folder: removed
+    make_folder(work_dir, "run-0000bbbb", 60)         # a run that may still be going: kept
+    make_folder(work_dir, "notes", 2 * 3600)          # old, but not a run folder: kept
+    make_folder(work_dir, "run-TOOLONG1", 2 * 3600)   # not a valid run id: kept
+
+    assert remove_stale_copies() == ["run-0000aaaa"]
+    assert sorted(p.name for p in work_dir.iterdir()) == ["notes", "run-0000bbbb", "run-TOOLONG1"]
+
+
+def test_main_removes_old_run_folders_on_start(work_dir, capsys):
+    from main import main
+
+    make_folder(work_dir, "run-0000aaaa", 2 * 3600)
+
+    main(["samples/clean.py"])
+
+    assert list(work_dir.iterdir()) == []
+
+
+def test_no_work_dir_is_fine(work_dir):
+    from tools.workspace import remove_stale_copies
+
+    assert remove_stale_copies() == []

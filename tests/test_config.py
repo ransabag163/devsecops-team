@@ -36,7 +36,8 @@ def test_every_agent_provider_exists():
         assert provider in config.PROVIDERS
 
 
-def test_work_dir_is_inside_the_project_and_ignored():
+def test_work_dir_is_inside_the_project_and_ignored(monkeypatch):
+    monkeypatch.undo()  # see the real WORK_DIR, not the tests' private one (conftest.py)
     assert config.WORK_DIR.parent == config.PROJECT_ROOT
     gitignore = (config.PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ".work/" in gitignore

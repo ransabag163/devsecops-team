@@ -22,6 +22,7 @@ from models.llm_developer import LLMDeveloperModel
 from models.llm_pen_tester import LLMPenTesterModel
 from models.llm_tester import LLMTesterModel
 from models.scripted import ScriptedDeveloperModel, ScriptedPenTesterModel, ScriptedTesterModel
+from tools.workspace import remove_stale_copies
 
 # Live trace lines start with this, so the full trace at the end is easy to find.
 TRACE_PREFIX = "[trace] "
@@ -47,6 +48,7 @@ def main(argv=None):
     models = MODELS[args.model]
     deadline = Deadline(config.RUN_DEADLINE_SECONDS)
     not_done = []
+    remove_stale_copies()  # run folders left over from a run that was stopped
 
     def prepare(agent):
         agent.deadline = deadline

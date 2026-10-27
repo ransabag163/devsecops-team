@@ -3,12 +3,15 @@
 The application (not the model) applies a proposal to a copy in a fresh folder
 WORK_DIR/run-<id>/, next to a meta.json that says what was changed. The
 original file is never written. After the run the application removes only its
-own run folder, and only after checking that it is inside WORK_DIR.
+own run folder, and only after checking that it is inside WORK_DIR. On start
+it also removes run folders left over from a run that was stopped (older than
+STALE_RUN_SECONDS), with the same checks.
 """
 
 import json
 import re
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -73,3 +76,19 @@ def remove_copy(copy_id):
         return False
     shutil.rmtree(folder)
     return True
+
+
+def remove_stale_copies(max_age=None):
+    """Remove run folders in WORK_DIR older than max_age seconds. Returns their names."""
+    max_age = config.STALE_RUN_SECONDS if max_age is None else max_age
+    work_dir = Path(config.WORK_DIR)
+    if not work_dir.is_dir():
+        return []
+    cutoff = time.time() - max_age
+    removed = []
+    for path in sorted(work_dir.iterdir()):
+        # copy_folder applies the same checks as the normal cleanup: name run-<id>, inside WORK_DIR.
+        if copy_folder(path.name) is not None and path.stat().st_mtime < cutoff:
+            remove_copy(path.name)
+            removed.append(path.name)
+    return removed

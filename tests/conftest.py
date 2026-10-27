@@ -1,5 +1,6 @@
 import pytest
 
+import config
 import models.llm_adapter
 
 
@@ -16,3 +17,9 @@ def no_real_api(monkeypatch):
 def no_real_waiting(monkeypatch):
     """Retries and the request gap never really sleep in tests."""
     monkeypatch.setattr(models.llm_adapter, "real_sleep", lambda seconds: None)
+
+
+@pytest.fixture(autouse=True)
+def private_work_dir(tmp_path, monkeypatch):
+    """Tests never create or remove run folders in the real .work/."""
+    monkeypatch.setattr(config, "WORK_DIR", tmp_path / ".work")
