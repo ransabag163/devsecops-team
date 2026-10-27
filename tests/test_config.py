@@ -34,3 +34,9 @@ def test_missing_env_file_is_fine(tmp_path):
 def test_every_agent_provider_exists():
     for provider in config.AGENT_PROVIDER.values():
         assert provider in config.PROVIDERS
+
+
+def test_work_dir_is_inside_the_project_and_ignored():
+    assert config.WORK_DIR.parent == config.PROJECT_ROOT
+    gitignore = (config.PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".work/" in gitignore

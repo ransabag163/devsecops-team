@@ -218,3 +218,15 @@ def test_groq_has_no_gap(key):
     client.chat([])
 
     assert sleep.waits == []
+
+
+def test_openrouter_url_and_default_model(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_KEY)
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+    transport = FakeTransport()
+
+    LLMClient("openrouter", transport).chat([])
+
+    call = transport.calls[0]
+    assert call["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert call["body"]["model"].endswith(":free")
