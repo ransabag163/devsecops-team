@@ -58,3 +58,6 @@ class LLMDecisionModel(DecisionModel):
 
     def set_deadline(self, deadline):
         self.client.deadline = deadline
+
+    def request_count(self):
+        return getattr(self.client, "requests", 0)

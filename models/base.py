@@ -21,3 +21,7 @@ class DecisionModel:
 
     def set_deadline(self, deadline):
         """Give the model the run's Deadline. Only LLM models need it (for their requests)."""
+
+    def request_count(self):
+        """Real model API requests made so far. Only LLM models make any."""
+        return 0

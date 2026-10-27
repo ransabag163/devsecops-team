@@ -37,7 +37,7 @@ MAX_RETRY_AFTER = 20
 
 class LLMError(Exception):
     """A model call failed. code is one of:
-    missing_api_key, http_error, timeout, bad_response, run_deadline."""
+    missing_api_key, http_error, timeout, bad_response, run_deadline, request_cap."""
 
     def __init__(self, code, status=None):
         self.code = code
@@ -117,6 +117,9 @@ class LLMClient:
         self.retries = []
         # The run's Deadline, set by the agent. None means no run limit.
         self.deadline = None
+        # Real requests sent by this client (one client per model per run), and the cap.
+        self.requests = 0
+        self.max_requests = config.MAX_REQUESTS_PER_RUN.get(provider)
 
     @property
     def model(self):
@@ -160,6 +163,9 @@ class LLMClient:
                 if self.deadline.passed():
                     raise LLMError("run_deadline")
                 timeout = min(timeout, self.deadline.remaining())  # never wait past the run deadline
+            if self.max_requests is not None and self.requests >= self.max_requests:
+                raise LLMError("request_cap")
+            self.requests += 1
             retry_after = None
             try:
                 status, text, retry_after = self.transport(url, headers, body, timeout)
