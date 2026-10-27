@@ -68,6 +68,40 @@ GEMINI_API_KEY=המפתח-שלכם
 
 אפשר להוסיף `GEMINI_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `gemini-3.1-flash-lite`).
 
+### בדיקת התיקונים (`--verify`)
+
+עם `--verify` (שכולל גם את `--fix`), אחרי ה־developer רץ סוכן ה־tester על כל תיקון מוצע.
+האפליקציה (לא המודל) מחילה את התיקון על עותק בתיקייה `.work/run-<id>/`, והקובץ המקורי לא נכתב לעולם.
+ה־tester מריץ שתי בדיקות על העותק:
+- `rescan` – סורק שוב: האם החולשה נסגרה, והאם התיקון הוסיף חולשה חדשה.
+- `run_behavior_tests` – מריץ שני סוגי טסטים מ־`samples/behavior/`:
+  - `test_<name>_works.py` – ההתנהגות הרגילה. עובר על המקור ועל תיקון טוב.
+  - `test_<name>_attack.py` – ההתקפה עצמה. נכשל על המקור (מוכיח שיש חולשה) ועובר על תיקון טוב.
+    כל טסט התקפה נושא בשמו את שם החוק, ורץ רק טסט ההתקפה של החוק שמתקנים.
+
+הטסטים רצים בתהליך נפרד, עם timeout של 30 שניות ועם סביבה מצומצמת: רק `PATH`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`,
+`TEMP`/`TMP` (בתוך תיקיית הריצה), `SAMPLE_UNDER_TEST` ו־`PYTHONDONTWRITEBYTECODE`. אין שם מפתחות או טוקנים.
+
+המודל בוחר `verdict`: `approve`, `retry` (עם feedback ל־developer) או `human`.
+האפליקציה מאשרת `approve` רק אם החולשה נסגרה, אין ממצאים חדשים ושני סוגי הטסטים עברו. אחרת הריצה נגמרת
+ב־`invalid_action` וה־verdict הופך ל־`human`. המודל יכול להחמיר, אף פעם לא להקל.
+בסוף הריצה האפליקציה מוחקת את תיקיית הריצה שלה. עם `--keep-work` התיקייה נשארת.
+
+```
+.venv\Scripts\python.exe main.py samples/login.py --verify
+.venv\Scripts\python.exe main.py samples/injection.py --verify --model llm --trace
+```
+
+הפלט כולל גם `verification_report`. קוד יציאה 2 גם אם ריצת ה־tester נכשלה.
+עם `--model llm`, ה־tester משתמש ב־OpenRouter, ולכן צריך להוסיף ל־`.env` גם:
+
+```
+OPENROUTER_API_KEY=המפתח-שלכם
+```
+
+אפשר להוסיף `OPENROUTER_MODEL=<model id>` כדי לבחור מודל אחר (ברירת המחדל: `nvidia/nemotron-3-super-120b-a12b:free`).
+בשכבה החינמית של OpenRouter יש בערך 50 בקשות ליום.
+
 ### ניסיונות חוזרים (retry)
 
 אם קריאה למודל נכשלת ב־timeout או בסטטוס זמני (429, 500, 502, 503, 504), האפליקציה מנסה שוב עד פעמיים:
