@@ -1,10 +1,11 @@
-"""Run the pen_tester agent on one file, and with --fix also the developer agent.
+"""Run the pen_tester agent on one file, with --fix also the developer agent,
+and with --verify also the tester agent.
 
 Usage:
-    .venv\\Scripts\\python.exe main.py samples/login.py [--model scripted|llm] [--fix] [--trace]
+    .venv\\Scripts\\python.exe main.py samples/login.py [--model scripted|llm] [--fix] [--verify] [--keep-work] [--trace]
 
 Exit code: 0 = no real findings, 1 = at least one real finding,
-           2 = error, a run that did not end in final, or (with --fix) a failed developer run.
+           2 = error, a run that did not end in final, or a failed developer or tester run.
 """
 
 import argparse
@@ -13,14 +14,17 @@ import sys
 
 from agents.developer import Developer
 from agents.pen_tester import PenTester
+from agents.tester import Tester
 from models.llm_developer import LLMDeveloperModel
 from models.llm_pen_tester import LLMPenTesterModel
-from models.scripted import ScriptedDeveloperModel, ScriptedPenTesterModel
+from models.llm_tester import LLMTesterModel
+from models.scripted import ScriptedDeveloperModel, ScriptedPenTesterModel, ScriptedTesterModel
 
 # Each agent gets its own model class; each LLM model uses its own provider.
 MODELS = {
-    "scripted": {"pen_tester": ScriptedPenTesterModel, "developer": ScriptedDeveloperModel},
-    "llm": {"pen_tester": LLMPenTesterModel, "developer": LLMDeveloperModel},
+    "scripted": {"pen_tester": ScriptedPenTesterModel, "developer": ScriptedDeveloperModel,
+                 "tester": ScriptedTesterModel},
+    "llm": {"pen_tester": LLMPenTesterModel, "developer": LLMDeveloperModel, "tester": LLMTesterModel},
 }
 
 
@@ -29,8 +33,11 @@ def main(argv=None):
     parser.add_argument("file_path", nargs="?", help="path to a .py file inside the project")
     parser.add_argument("--model", choices=MODELS, default="scripted", help="decision component (default: scripted)")
     parser.add_argument("--fix", action="store_true", help="also ask the developer agent for fixes")
+    parser.add_argument("--verify", action="store_true", help="also check each fix with the tester agent (implies --fix)")
+    parser.add_argument("--keep-work", action="store_true", help="keep the tester's run folders in .work/")
     parser.add_argument("--trace", action="store_true", help="also print the agent trace")
     args = parser.parse_args(argv)
+    args.fix = args.fix or args.verify
     models = MODELS[args.model]
 
     run = PenTester(models["pen_tester"]()).review(args.file_path)
@@ -50,6 +57,15 @@ def main(argv=None):
                 code = 2
         output = {"findings_report": findings_output, "fix_report": fix_run and fix_run["result"]}
         trace = {"pen_tester": run["trace"], "developer": fix_run and fix_run["runs"]}
+
+        if args.verify:
+            verify_run = None
+            if fix_run is not None:  # check whatever proposals the developer made
+                verify_run = Tester(models["tester"]()).verify(run["result"], fix_run["result"], args.keep_work)
+                if verify_run["status"] != "final" or verify_run["result"]["status"] == "input_error":
+                    code = 2
+            output["verification_report"] = verify_run and verify_run["result"]
+            trace["tester"] = verify_run and verify_run["runs"]
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
     if args.trace:
