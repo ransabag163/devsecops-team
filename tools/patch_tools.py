@@ -32,6 +32,23 @@ def read_snippet(file_path, start_line, end_line):
 
 
 def make_diff(file_path, start_line, end_line, replacement):
+    change = apply_change(file_path, start_line, end_line, replacement)
+    if not change["ok"]:
+        return change
+
+    name = _display_name(file_path)
+    diff = "\n".join(difflib.unified_diff(
+        _strip(change["lines"]), _strip(change["patched"]), fromfile=f"a/{name}", tofile=f"b/{name}", lineterm="",
+    ))
+    return {"ok": True, "start_line": start_line, "end_line": end_line, "diff": diff + "\n"}
+
+
+def apply_change(file_path, start_line, end_line, replacement):
+    """Check a change and apply it to an in-memory copy of the file.
+
+    Returns {"ok": True, "lines": original lines, "patched": new lines} or an error.
+    make_diff and the tester's patched copies both use it, so they apply the same rules.
+    """
     loaded = _load(file_path)
     if not loaded["ok"]:
         return loaded
@@ -52,12 +69,7 @@ def make_diff(file_path, start_line, end_line, replacement):
         ast.parse("".join(patched))
     except (SyntaxError, ValueError):
         return {"ok": False, "error": "syntax_error"}
-
-    name = _display_name(file_path)
-    diff = "\n".join(difflib.unified_diff(
-        _strip(lines), _strip(patched), fromfile=f"a/{name}", tofile=f"b/{name}", lineterm="",
-    ))
-    return {"ok": True, "start_line": start_line, "end_line": end_line, "diff": diff + "\n"}
+    return {"ok": True, "lines": lines, "patched": patched}
 
 
 def _load(file_path):
