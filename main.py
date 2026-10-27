@@ -1,12 +1,19 @@
-"""Run the pen_tester agent on one file, with --fix also the developer agent,
-and with --verify also the tester agent.
+"""Run the agents on one file.
 
 Usage:
-    .venv\\Scripts\\python.exe main.py samples/login.py [--model scripted|llm] [--fix] [--verify] [--keep-work] [--trace]
+    main.py review <file> [--model scripted|llm] [--keep-work] [--trace]
+        The team run (orchestrator.py): pen_tester -> developer -> tester, with up
+        to 3 attempts per finding. Writes decision cards to reports/.
+    main.py apply <report.json> --ids F1,F2
+        Run only by a human: writes the chosen ready fixes into the file, after
+        checking them together on a copy. Never commits.
+    main.py <file> [--model scripted|llm] [--fix] [--verify] [--keep-work] [--trace]
+        The older single pass: pen_tester, with --fix also developer, with --verify also tester.
 
-Exit code: 0 = no real findings, 1 = at least one real finding,
+Exit code: 0 = no real findings (apply: applied), 1 = at least one real finding,
            2 = error, a run that did not end in final, a failed developer or tester run,
-               or the run deadline (config.RUN_DEADLINE_SECONDS) passed before the work was done.
+               or the run deadline passed before the work was done,
+           3 = apply refused (the reason is printed).
 """
 
 import argparse
@@ -18,10 +25,13 @@ from agents.developer import Developer
 from agents.pen_tester import PenTester
 from agents.tester import Tester
 from deadline import Deadline
+from orchestrator import Orchestrator
 from models.llm_developer import LLMDeveloperModel
 from models.llm_pen_tester import LLMPenTesterModel
 from models.llm_tester import LLMTesterModel
 from models.scripted import ScriptedDeveloperModel, ScriptedPenTesterModel, ScriptedTesterModel
+from reports import write_report
+from tools.apply_fixes import apply_report
 from tools.workspace import remove_stale_copies
 
 # Live trace lines start with this, so the full trace at the end is easy to find.
@@ -36,6 +46,63 @@ MODELS = {
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "review":
+        return review_command(argv[1:])
+    if argv and argv[0] == "apply":
+        return apply_command(argv[1:])
+    return single_pass(argv)
+
+
+def review_command(argv):
+    parser = argparse.ArgumentParser(prog="main.py review", description="Run the whole team on one file.")
+    parser.add_argument("file_path", help="path to a .py file inside the project")
+    parser.add_argument("--model", choices=MODELS, default="scripted", help="decision component (default: scripted)")
+    parser.add_argument("--keep-work", action="store_true", help="keep the run folders in .work/")
+    parser.add_argument("--trace", action="store_true", help="also print the agent trace")
+    args = parser.parse_args(argv)
+    models = MODELS[args.model]
+    deadline = Deadline(config.REVIEW_DEADLINE_SECONDS)
+    remove_stale_copies()
+
+    def prepare(agent):
+        agent.deadline = deadline
+        if args.trace:
+            agent.on_step = print_step
+        return agent
+
+    orchestrator = Orchestrator(prepare(PenTester(models["pen_tester"]())), prepare(Developer(models["developer"]())),
+                                prepare(Tester(models["tester"]())), deadline, args.keep_work,
+                                on_event=print_event if args.trace else None)
+    state = orchestrator.review(args.file_path)
+    report = state["final_report"]
+    files = write_report(report)
+
+    print(json.dumps({"report_files": files, **report}, indent=2, ensure_ascii=False))
+    if args.trace:
+        print(json.dumps(state["runs"], indent=2, ensure_ascii=False), file=sys.stderr)
+    if report["status"] in ("error", "partial") or deadline.hit:
+        return 2
+    return 1 if report["cards"] else 0
+
+
+def apply_command(argv):
+    parser = argparse.ArgumentParser(prog="main.py apply", description="Apply ready fixes from a review report.")
+    parser.add_argument("report", help="the .json report written by main.py review")
+    parser.add_argument("--ids", required=True, help="comma-separated card ids, for example F1,F2")
+    args = parser.parse_args(argv)
+    ids = [part.strip() for part in args.ids.split(",") if part.strip()]
+
+    result = apply_report(args.report, ids)
+    if not result["ok"]:
+        print(f"refused: {result['reason']}")
+        return 3
+    print(result["diff"], end="")
+    print(f"applied {', '.join(result['ids'])} to {result['file']}. Nothing was committed.")
+    return 0
+
+
+def single_pass(argv):
     parser = argparse.ArgumentParser(description="Find security weaknesses in a Python file.")
     parser.add_argument("file_path", nargs="?", help="path to a .py file inside the project")
     parser.add_argument("--model", choices=MODELS, default="scripted", help="decision component (default: scripted)")
@@ -99,6 +166,11 @@ def main(argv=None):
         # The trace goes to stderr, so stdout stays clean JSON for scripts.
         print(json.dumps(trace, indent=2, ensure_ascii=False), file=sys.stderr)
     return code
+
+
+def print_event(event):
+    """With --trace, print each graph node as it starts (review only)."""
+    print(TRACE_PREFIX + json.dumps(event, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
 def print_step(agent, finding_id, entry):

@@ -31,26 +31,13 @@ class Tester(BaseAgent):
                 not_done = [p["finding_id"] for p in proposed[index:]]
                 break
             finding_id = proposal["finding_id"]
-            copy = create_copy(file_path, findings[finding_id], proposal)
-            if not copy["ok"]:
-                verifications.append(Verification(
-                    finding_id, None, None, "not_run", "not_run", "human",
-                    f"The application could not apply the proposal: {copy['error']}", "final"))
-                continue
-
-            copy_id = copy["copy_id"]
-            try:
-                run = self.run({"file_path": file_path, "finding": findings[finding_id], "proposal": proposal,
-                                "copy_id": copy_id, "actions": [], "observations": []})
-            finally:
-                if not keep_work:
-                    remove_copy(copy_id)
-            runs.append({"finding_id": finding_id, "status": run["status"], "copy_id": copy_id, "trace": run["trace"]})
-
-            if run["status"] == "final" and "error" in run["result"]:  # the model itself could not be reached
-                report = VerificationReport(file_path, "input_error", verifications, run["result"]["error"])
+            checked = self.verify_one(file_path, findings[finding_id], proposal, keep_work)
+            if checked["run"] is not None:
+                runs.append(checked["run"])
+            if "error" in checked:  # the model itself could not be reached
+                report = VerificationReport(file_path, "input_error", verifications, checked["error"])
                 return {"status": "final", "result": report.to_dict(), "runs": runs, "not_done": not_done}
-            verifications.append(_verification(finding_id, run, copy_id))
+            verifications.append(checked["verification"])
 
         error = "not done (run deadline): " + ", ".join(not_done) if not_done else None
         report = VerificationReport(file_path, "verified" if verifications else "no_proposals", verifications, error)
@@ -59,6 +46,31 @@ class Tester(BaseAgent):
         if not_done:
             overall = "budget_exhausted"
         return {"status": overall, "result": report.to_dict(), "runs": runs, "not_done": not_done}
+
+    def verify_one(self, file_path, finding, proposal, keep_work=False):
+        """Check one proposal on a fresh patched copy, then remove the copy.
+
+        Returns {"status", "verification": Verification, "run"}, or {"status", "error", "run"}
+        when the model could not be reached. run is None if no copy could be made.
+        """
+        finding_id = finding["id"]
+        copy = create_copy(file_path, finding, proposal)
+        if not copy["ok"]:
+            verification = Verification(finding_id, None, None, "not_run", "not_run", "human",
+                                        f"The application could not apply the proposal: {copy['error']}", "final")
+            return {"status": "final", "verification": verification, "run": None}
+
+        copy_id = copy["copy_id"]
+        try:
+            run = self.run({"file_path": file_path, "finding": finding, "proposal": proposal,
+                            "copy_id": copy_id, "actions": [], "observations": []})
+        finally:
+            if not keep_work:
+                remove_copy(copy_id)
+        run_info = {"finding_id": finding_id, "status": run["status"], "copy_id": copy_id, "trace": run["trace"]}
+        if run["status"] == "final" and "error" in run["result"]:
+            return {"status": "final", "error": run["result"]["error"], "run": run_info}
+        return {"status": run["status"], "verification": _verification(finding_id, run, copy_id), "run": run_info}
 
     def check_final(self, action, state):
         verification = action.get("verification")

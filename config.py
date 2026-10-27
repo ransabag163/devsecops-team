@@ -23,6 +23,14 @@ HTTP_TIMEOUT = 30
 
 # Seconds for a whole main.py run. After that no agent starts another step.
 RUN_DEADLINE_SECONDS = 300
+# The team run (main.py review) may take longer: up to 3 attempts per finding.
+REVIEW_DEADLINE_SECONDS = 600
+
+# At most this many requests to a provider in one run (OpenRouter's free tier has about 50 a day).
+MAX_REQUESTS_PER_RUN = {"openrouter": 20}
+
+# Decision cards of main.py review are written here (git-ignored).
+REPORTS_DIR = PROJECT_ROOT / "reports"
 
 # Run folders in WORK_DIR older than this are left over from a stopped run and removed on start.
 STALE_RUN_SECONDS = 3600

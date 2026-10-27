@@ -32,15 +32,11 @@ def rescan(copy_id):
     if not patched["ok"]:
         return patched
 
-    start, new_end = meta["start_line"], meta["new_end_line"]
-    # Still open if the rule fires near the changed lines or where the finding itself moved to.
-    finding_low, finding_high = _new_lines(meta["finding_line"], meta)
-    closed = not any(
-        f["rule"] == meta["rule"]
-        and (start - NEAR_LINES <= f["line"] <= new_end + NEAR_LINES or finding_low <= f["line"] <= finding_high)
-        for f in patched["findings"]
-    )
-    known = [(f["rule"], _new_lines(f["line"], meta)) for f in original["findings"]]
+    changes = meta["changes"]
+    # closed only if every change closed its finding: the rule may not fire near the
+    # changed lines or where the finding itself moved to.
+    closed = all(_change_closed(change, changes, patched["findings"]) for change in changes)
+    known = [(f["rule"], _new_lines(f["line"], changes)) for f in original["findings"]]
     new_findings = [
         {key: f[key] for key in ("rule", "cwe", "line", "evidence")}
         for f in patched["findings"]
@@ -49,15 +45,26 @@ def rescan(copy_id):
     return {"ok": True, "closed": closed, "new_findings": new_findings}
 
 
-def _new_lines(line, meta):
+def _change_closed(change, changes, patched_findings):
+    start, new_end = change["new_start_line"], change["new_end_line"]
+    finding_low, finding_high = _new_lines(change["finding_line"], changes)
+    return not any(
+        f["rule"] == change["rule"]
+        and (start - NEAR_LINES <= f["line"] <= new_end + NEAR_LINES or finding_low <= f["line"] <= finding_high)
+        for f in patched_findings
+    )
+
+
+def _new_lines(line, changes):
     """Where an original line ended up in the copy, as a (low, high) range."""
-    start, end, new_end = meta["start_line"], meta["end_line"], meta["new_end_line"]
-    if line < start:
-        return line, line
-    if line > end:
-        moved = line + new_end - end
-        return moved, moved
-    return start, max(start, new_end)  # inside the change: anywhere in the new lines
+    moved = line
+    for change in changes:
+        if change["start_line"] <= line <= change["end_line"]:
+            # Inside a change: anywhere in its new lines.
+            return change["new_start_line"], max(change["new_start_line"], change["new_end_line"])
+        if line > change["end_line"]:
+            moved += (change["new_end_line"] - change["new_start_line"] + 1) - (change["end_line"] - change["start_line"] + 1)
+    return moved, moved
 
 
 def run_behavior_tests(copy_id):
@@ -79,7 +86,8 @@ def run_behavior_tests(copy_id):
 
     env = behavior_env(folder, folder / meta["copy_file"])
     works = _run_pytest(folder, env, [f"behavior/{works_file.name}"])
-    attack = _run_pytest(folder, env, [f"behavior/{attack_file.name}", "-k", meta["rule"]])
+    # Only the attacks of the rules this copy is about (one rule, or the chosen rules for apply).
+    attack = _run_pytest(folder, env, [f"behavior/{attack_file.name}", "-k", " or ".join(meta["rules"])])
     output = f"works:\n{works['output'][-MAX_OUTPUT // 2:]}\nattack:\n{attack['output'][-MAX_OUTPUT // 2:]}"
     return {"ok": True, "works": works["result"], "attack": attack["result"], "output": output[:MAX_OUTPUT]}
 
@@ -94,6 +102,8 @@ def behavior_env(folder, sample_path):
         "TMP": str(temp),
         "SAMPLE_UNDER_TEST": str(sample_path),
         "PYTHONDONTWRITEBYTECODE": "1",
+        # No third-party pytest plugins (langgraph brings anyio and langsmith): faster and fewer moving parts.
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
     })
     return env
 

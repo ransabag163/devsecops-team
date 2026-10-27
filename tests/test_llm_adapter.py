@@ -282,3 +282,33 @@ def test_a_body_in_chunks_is_joined():
                                           urlopen=lambda request, timeout: response, clock=FakeClock(0.1))
 
     assert (status, text, retry_after) == (200, '{"a": "b"}', None)
+
+
+# ---------- requests per run ----------
+
+def test_requests_are_counted_and_capped(monkeypatch):
+    import config
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_KEY)
+    monkeypatch.setitem(config.MAX_REQUESTS_PER_RUN, "openrouter", 2)
+    transport = FakeTransport()
+    client = LLMClient("openrouter", transport)
+
+    client.chat([])
+    client.chat([])
+    with pytest.raises(LLMError) as error:
+        client.chat([])
+
+    assert client.requests == 2
+    assert error.value.code == "request_cap"
+    assert len(transport.calls) == 2
+
+
+def test_retries_count_as_requests(key):
+    transport = FakeTransport(status=503)
+    client = LLMClient("groq", transport, sleep=lambda s: None)
+
+    with pytest.raises(LLMError):
+        client.chat([])
+
+    assert client.requests == 3

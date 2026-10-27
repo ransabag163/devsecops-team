@@ -165,7 +165,8 @@ def probe(tmp_path, monkeypatch, work_dir):
 ENV_CHECK = '''\
 import os
 
-ALLOWED = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "SAMPLE_UNDER_TEST", "PYTHONDONTWRITEBYTECODE"}
+ALLOWED = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "SAMPLE_UNDER_TEST", "PYTHONDONTWRITEBYTECODE",
+           "PYTEST_DISABLE_PLUGIN_AUTOLOAD"}
 
 
 def test_environment_is_only_the_allowlist():
@@ -274,3 +275,48 @@ def test_no_work_dir_is_fine(work_dir):
     from tools.workspace import remove_stale_copies
 
     assert remove_stale_copies() == []
+
+
+# ---------- combined copies and the unchanged copy ----------
+
+GOOD_SHELL_FIX = {"start_line": 18, "end_line": 18, "replacement": '    subprocess.run(["cp", "users.db", target])'}
+SHELL = {"rule": "shell_injection", "line": 18}
+
+
+def test_combined_copy_maps_lines_through_every_change(work_dir):
+    from tools.workspace import create_combined_copy
+
+    # The secret fix adds a line above the SQL fix, and both move the shell finding.
+    copy_id = create_combined_copy("samples/login.py", [(SECRET, GOOD_SECRET_FIX), (SQL, GOOD_SQL_FIX)])["copy_id"]
+
+    assert rescan(copy_id) == {"ok": True, "closed": True, "new_findings": []}
+
+
+def test_combined_copy_is_not_closed_if_one_change_fails(work_dir):
+    from tools.workspace import create_combined_copy
+
+    docstring_only = {"start_line": 1, "end_line": 1, "replacement": '"""A login module."""'}
+    copy_id = create_combined_copy("samples/login.py", [(SQL, docstring_only), (SHELL, GOOD_SHELL_FIX)])["copy_id"]
+
+    assert rescan(copy_id)["closed"] is False
+
+
+def test_combined_copy_runs_the_attacks_of_all_chosen_rules(work_dir):
+    from tools.workspace import create_combined_copy
+
+    copy_id = create_combined_copy("samples/login.py", [(SQL, GOOD_SQL_FIX), (SHELL, GOOD_SHELL_FIX)])["copy_id"]
+
+    result = run_behavior_tests(copy_id)
+
+    assert (result["works"], result["attack"]) == ("passed", "passed")
+    assert "2 passed" in result["output"]  # sql_concat and shell_injection, not hardcoded_secret
+
+
+def test_the_attack_fails_on_an_unchanged_copy_of_the_original(work_dir):
+    from tools.workspace import create_original_copy
+
+    copy_id = create_original_copy("samples/login.py", SQL)["copy_id"]
+    folder = copy_folder(copy_id)
+
+    assert (folder / "login.py").read_bytes() == LOGIN.read_bytes()
+    assert run_behavior_tests(copy_id)["attack"] == "failed"

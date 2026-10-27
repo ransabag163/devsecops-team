@@ -1,1 +1,2 @@
-pytest
+﻿pytest
+langgraph==1.2.18
