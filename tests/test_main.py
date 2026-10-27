@@ -40,7 +40,7 @@ def fake_transport(*contents, status=200):
 
     def transport(url, headers, body, timeout):
         text = json.dumps({"choices": [{"message": {"content": replies.pop(0)}}]}) if replies else ""
-        return status, text
+        return status, text, None
 
     return transport
 
@@ -99,3 +99,101 @@ def test_llm_invalid_action_exits_with_2(capsys, monkeypatch):
 
     assert main(["samples/login.py", "--model", "llm"]) == 2
     assert json.loads(capsys.readouterr().out)["status"] == "invalid_action"
+
+
+# ---------- --fix ----------
+
+def test_fix_prints_both_reports(capsys):
+    assert main(["samples/login.py", "--fix"]) == 1
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["findings_report"]["status"] == "findings"
+    assert output["fix_report"]["status"] == "fixes"
+    assert [p["status"] for p in output["fix_report"]["proposals"]] == ["proposed", "skipped", "skipped"]
+
+
+def test_fix_does_not_change_the_original_file(capsys):
+    import hashlib
+
+    import config
+    path = config.PROJECT_ROOT / "samples" / "login.py"
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    main(["samples/login.py", "--fix", "--trace"])
+
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_fix_on_an_input_error_does_not_run_the_developer(capsys):
+    assert main(["samples/notes.txt", "--fix"]) == 2
+    assert json.loads(capsys.readouterr().out)["fix_report"] is None
+
+
+def test_fix_trace_has_both_agents(capsys):
+    main(["samples/login.py", "--fix", "--trace"])
+    trace = json.loads(capsys.readouterr().err)
+
+    assert [entry["step"] for entry in trace["pen_tester"]] == [1, 2]
+    assert [run["finding_id"] for run in trace["developer"]] == ["F1", "F2", "F3"]
+
+
+def route_by_provider(groq_replies, gemini_replies):
+    """A fake transport that answers per provider, so each agent gets its own replies."""
+    queues = {"api.groq.com": list(groq_replies), "googleapis.com": list(gemini_replies)}
+
+    def transport(url, headers, body, timeout):
+        queue = next(q for host, q in queues.items() if host in url)
+        return 200, json.dumps({"choices": [{"message": {"content": queue.pop(0)}}]}), None
+
+    return transport
+
+
+GEMINI_FAKE_KEY = "fake-gemini-key-456"
+
+
+def llm_fix_replies(proposal_line=9):
+    return [
+        json.dumps({"kind": "tool", "name": "read_snippet",
+                    "args": {"file_path": "samples/injection.py", "start_line": 1, "end_line": 9}}),
+        json.dumps({"kind": "final", "text": "done", "proposal": {
+            "finding_id": "F1", "status": "proposed", "start_line": proposal_line, "end_line": proposal_line,
+            "replacement": '    os.execvp("ping", ["ping", "-c", "1", host])',
+            "explanation": "run ping without a shell"}}),
+    ]
+
+
+def test_llm_fix_uses_both_providers_and_never_prints_keys(capsys, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", FAKE_KEY)
+    monkeypatch.setenv("GEMINI_API_KEY", GEMINI_FAKE_KEY)
+    use_transport(monkeypatch, route_by_provider(tool_then_final("real"), llm_fix_replies()))
+
+    code = main(["samples/injection.py", "--fix", "--model", "llm", "--trace"])
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+
+    assert code == 1
+    assert output["fix_report"]["proposals"][0]["status"] == "proposed"
+    for key in (FAKE_KEY, GEMINI_FAKE_KEY):
+        assert key not in captured.out
+        assert key not in captured.err
+
+
+def test_llm_fix_with_a_bad_proposal_exits_with_2(capsys, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", FAKE_KEY)
+    monkeypatch.setenv("GEMINI_API_KEY", GEMINI_FAKE_KEY)
+    # Line 40 is 31 lines from the finding on line 9, so the developer rejects it.
+    use_transport(monkeypatch, route_by_provider(tool_then_final("real"), llm_fix_replies(proposal_line=40)))
+
+    assert main(["samples/injection.py", "--fix", "--model", "llm"]) == 2
+    assert "invalid_action" in json.loads(capsys.readouterr().out)["fix_report"]["error"]
+
+
+def test_llm_fix_missing_gemini_key_exits_with_2(capsys, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", FAKE_KEY)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    use_transport(monkeypatch, route_by_provider(tool_then_final("real"), []))
+
+    assert main(["samples/injection.py", "--fix", "--model", "llm"]) == 2
+    fix_report = json.loads(capsys.readouterr().out)["fix_report"]
+    assert fix_report["status"] == "input_error"
+    assert fix_report["error"] == "missing_api_key"

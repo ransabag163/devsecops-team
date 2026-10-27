@@ -3,7 +3,7 @@ import json
 import pytest
 
 from agents.pen_tester import PenTester
-from models.llm_adapter import LLMError
+from models.llm_adapter import LLMClient, LLMError
 from models.llm_pen_tester import LLMPenTesterModel
 
 
@@ -137,6 +137,17 @@ def test_model_error_gives_input_error(code):
     assert run["trace"] == [{"step": 1, "action": None, "error": code}]
 
 
+def test_http_error_keeps_the_status_in_report_and_trace():
+    class FailingClient:
+        def chat(self, messages):
+            raise LLMError("http_error", 429)
+
+    run = review(FailingClient())
+
+    assert run["result"]["error"] == "http_error (429)"
+    assert run["trace"][0]["error"] == "http_error (429)"
+
+
 def test_no_file_path_asks_to_clarify_without_calling_the_model():
     client = FakeClient()
 
@@ -144,3 +155,32 @@ def test_no_file_path_asks_to_clarify_without_calling_the_model():
 
     assert run["status"] == "clarify"
     assert client.calls == []
+
+
+def answer(content):
+    return 200, json.dumps({"choices": [{"message": {"content": content}}]}), None
+
+
+def test_retries_are_recorded_in_the_trace(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-tests-123")
+    answers = [(503, "", None), answer(tool_call()), answer(final(LOGIN_VERDICTS))]
+    client = LLMClient("groq", lambda url, headers, body, timeout: answers.pop(0), sleep=lambda s: None)
+
+    run = review(client)
+
+    assert run["status"] == "final"
+    assert run["trace"][0]["retries"] == [{"attempt": 1, "status": 503}]
+    assert "retries" not in run["trace"][1]
+
+
+def test_giving_up_keeps_the_retries_and_the_error_in_the_trace(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-tests-123")
+    client = LLMClient("groq", lambda url, headers, body, timeout: (503, "", None), sleep=lambda s: None)
+
+    run = review(client)
+
+    assert run["result"]["error"] == "http_error (503)"
+    assert run["trace"] == [{
+        "step": 1, "action": None, "error": "http_error (503)",
+        "retries": [{"attempt": 1, "status": 503}, {"attempt": 2, "status": 503}],
+    }]

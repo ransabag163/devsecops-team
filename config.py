@@ -9,6 +9,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # How many decisions an agent may make before we stop it.
 MAX_STEPS = 4
 
+# The developer gets a fresh budget for each finding it fixes.
+DEVELOPER_MAX_STEPS = 5
+
 # Files larger than this are not analyzed.
 MAX_FILE_BYTES = 200_000
 
@@ -22,11 +25,20 @@ PROVIDERS = {
         "key_env": "GROQ_API_KEY",
         "model_env": "GROQ_MODEL",
     },
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "key_env": "GEMINI_API_KEY",
+        "model_env": "GEMINI_MODEL",
+    },
 }
 
-# Which provider each agent uses. Later each agent may get its own.
+# Minimum seconds between two requests to the same provider (Gemini's free tier is easy to overload).
+MIN_REQUEST_INTERVAL = {"gemini": 4.0, "groq": 0.0}
+
+# Which provider each agent uses.
 AGENT_PROVIDER = {
     "pen_tester": "groq",
+    "developer": "gemini",
 }
 
 
