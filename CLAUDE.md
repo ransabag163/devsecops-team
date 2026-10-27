@@ -30,6 +30,7 @@ A human approves every change to the original code. The team will later check th
 - Push after every commit (`git push -u origin <branch>` the first time).
 - Do not open or merge pull requests. The user opens the PR on GitHub and reviews it.
 - Never force-push, never rewrite history, never delete files (no `git rm` / `git clean`). If something should be removed, ask the user.
+- Learning mode: the user runs every git command that changes something himself. Run only read-only git. After each part, stop and give him the changed files, a commit message and the commands to type.
 
 ## Talking to us
 - Talk to us in **Hebrew**. Code, comments and commit messages in English.
