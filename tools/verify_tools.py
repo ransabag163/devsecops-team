@@ -33,8 +33,11 @@ def rescan(copy_id):
         return patched
 
     start, new_end = meta["start_line"], meta["new_end_line"]
+    # Still open if the rule fires near the changed lines or where the finding itself moved to.
+    finding_low, finding_high = _new_lines(meta["finding_line"], meta)
     closed = not any(
-        f["rule"] == meta["rule"] and start - NEAR_LINES <= f["line"] <= new_end + NEAR_LINES
+        f["rule"] == meta["rule"]
+        and (start - NEAR_LINES <= f["line"] <= new_end + NEAR_LINES or finding_low <= f["line"] <= finding_high)
         for f in patched["findings"]
     )
     known = [(f["rule"], _new_lines(f["line"], meta)) for f in original["findings"]]
@@ -99,7 +102,8 @@ def collect_checks(actions, observations, copy_id):
     """The latest result of each check on copy_id, taken from the tool observations only."""
     checks = {"closed": None, "new_findings": None, "works": "not_run", "attack": "not_run", "errors": []}
     for action, observation in zip(actions, observations):
-        if action.get("args", {}).get("copy_id") != copy_id:
+        args = action.get("args")
+        if not isinstance(args, dict) or args.get("copy_id") != copy_id:
             continue  # a check on another copy says nothing about this proposal
         if not observation.get("ok"):
             checks["errors"].append(f"{action.get('name')}: {observation.get('error')}")

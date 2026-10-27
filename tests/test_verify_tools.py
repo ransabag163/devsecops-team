@@ -226,3 +226,10 @@ def test_other_agents_may_not_use_the_tester_tools():
 def test_tester_tools_check_the_copy_id(work_dir, args, error):
     for name in ("rescan", "run_behavior_tests"):
         assert execute("tester", tool(name, args), config.PROJECT_ROOT) == {"ok": False, "error": error}
+
+
+def test_rescan_a_change_far_from_the_finding_is_not_closed(work_dir):
+    docstring_only = {"start_line": 1, "end_line": 1, "replacement": '"""A login module."""'}
+    copy_id = create_copy("samples/login.py", SQL, docstring_only)["copy_id"]
+
+    assert rescan(copy_id) == {"ok": True, "closed": False, "new_findings": []}

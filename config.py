@@ -12,6 +12,9 @@ MAX_STEPS = 4
 # The developer gets a fresh budget for each finding it fixes.
 DEVELOPER_MAX_STEPS = 5
 
+# The tester gets a fresh budget for each proposal it checks.
+TESTER_MAX_STEPS = 4
+
 # Files larger than this are not analyzed.
 MAX_FILE_BYTES = 200_000
 
