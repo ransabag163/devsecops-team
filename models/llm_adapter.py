@@ -45,21 +45,47 @@ class LLMError(Exception):
         super().__init__(f"{code} ({status})" if status else code)
 
 
+READ_CHUNK = 65536
+
+
 def urllib_transport(url, headers, body, timeout):
     """Send one POST request. Returns (status, text, retry_after). Raises TimeoutError.
 
     retry_after is the raw Retry-After header of an error answer, or None.
     """
+    return http_post(url, headers, body, timeout)
+
+
+def http_post(url, headers, body, timeout, urlopen=urllib.request.urlopen, clock=time.monotonic):
+    """The real HTTP call behind urllib_transport. urlopen and clock can be replaced in tests.
+
+    timeout is a hard deadline for the whole request. The socket timeout alone
+    only limits each read, so a server that sends a byte now and then could
+    keep the request open forever.
+    """
+    deadline = clock() + timeout
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read().decode("utf-8"), None
+        with urlopen(request, timeout=timeout) as response:
+            return response.status, read_until(response, deadline, clock), None
     except urllib.error.HTTPError as e:
         return e.code, "", e.headers.get("Retry-After")
     except urllib.error.URLError as e:
         if isinstance(e.reason, (TimeoutError, socket.timeout)):
             raise TimeoutError() from None
         return 0, "", None
+
+
+def read_until(response, deadline, clock):
+    """Read the body in chunks. Raises TimeoutError once the clock passes the deadline."""
+    chunks = []
+    while True:
+        if clock() > deadline:
+            raise TimeoutError()
+        chunk = response.read1(READ_CHUNK)  # returns as soon as some bytes arrive
+        if not chunk:
+            return b"".join(chunks).decode("utf-8")
+        chunks.append(chunk)
 
 
 def real_sleep(seconds):
