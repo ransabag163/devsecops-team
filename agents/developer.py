@@ -30,7 +30,7 @@ class Developer(BaseAgent):
                 not_done = [f["id"] for f in real[index:]]
                 problems.append("not done (run deadline): " + ", ".join(not_done))
                 break
-            run = self.run({"file_path": file_path, "finding": finding, "actions": [], "observations": []})
+            run = self.fix_one(file_path, finding)
             runs.append({"finding_id": finding["id"], "status": run["status"], "trace": run["trace"]})
 
             if run["status"] != "final":
@@ -48,6 +48,18 @@ class Developer(BaseAgent):
         if not_done:
             overall = "budget_exhausted"
         return {"status": overall, "result": report.to_dict(), "runs": runs, "not_done": not_done}
+
+    def fix_one(self, file_path, finding, feedback=None, previous=()):
+        """One attempt to fix one finding. Returns the run (status, result, trace).
+
+        feedback is the note on the last failed attempt; the model gets it as DATA.
+        previous holds the earlier proposals for this finding.
+        """
+        state = {"file_path": file_path, "finding": finding, "actions": [], "observations": [],
+                 "previous_proposals": [dict(p) for p in previous]}
+        if feedback:
+            state["feedback"] = feedback
+        return self.run(state)
 
     def check_final(self, action, state):
         proposal = action.get("proposal")
@@ -73,6 +85,9 @@ class Developer(BaseAgent):
         distance = 0 if start <= line <= end else min(abs(start - line), abs(end - line))
         if distance > MAX_DISTANCE:
             return f"change is {distance} lines from the finding on line {line}"
+        for number, earlier in enumerate(state.get("previous_proposals", []), 1):
+            if (start, end, replacement) == (earlier.get("start_line"), earlier.get("end_line"), earlier.get("replacement")):
+                return f"the same change as attempt {number}, which already failed"
 
         # Never trust a diff from the model: make it again with the real tool.
         result = execute("developer", {"kind": "tool", "name": "make_diff", "args": {
