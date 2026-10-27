@@ -21,6 +21,7 @@ A human approves every change to the original code. The team will later check th
 - Agents never modify the user's original file. They return a report or a diff.
 - No secrets in code. API keys live only in `.env`, which is git-ignored.
 - Keep the code simple and readable. This is a student project.
+- Update `docs/ARCHITECTURE.md` (in Hebrew) in every step: diagrams, the file table, the enforced rules and the known limits must match the code on the branch.
 
 ## Git workflow
 - Never commit to `main`. One branch per step, named `stepN-short-name`.
