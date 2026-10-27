@@ -49,22 +49,36 @@ def apply_change(file_path, start_line, end_line, replacement):
     Returns {"ok": True, "lines": original lines, "patched": new lines} or an error.
     make_diff and the tester's patched copies both use it, so they apply the same rules.
     """
+    return apply_changes(file_path, [(start_line, end_line, replacement)])
+
+
+def apply_changes(file_path, changes):
+    """Apply several (start_line, end_line, replacement) changes to one in-memory copy.
+
+    Each change is checked like make_diff, the changes may not overlap, and the
+    whole patched file must still parse. Used by apply for the combined copy.
+    """
     loaded = _load(file_path)
     if not loaded["ok"]:
         return loaded
     lines = loaded["lines"]
-
-    if start_line < 1 or end_line < start_line or end_line > len(lines):
-        return {"ok": False, "error": "invalid_range"}
-    new_lines = replacement.splitlines()
-    if end_line - start_line + 1 > MAX_ORIGINAL_LINES or len(new_lines) > MAX_REPLACEMENT_LINES:
-        return {"ok": False, "error": "change_too_large"}
-
     newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
-    patched = lines[:start_line - 1] + [line + newline for line in new_lines] + lines[end_line:]
 
-    if _strip(patched) == _strip(lines):
-        return {"ok": False, "error": "empty_change"}
+    ordered = sorted(changes, key=lambda change: change[0])
+    for index, (start_line, end_line, replacement) in enumerate(ordered):
+        if start_line < 1 or end_line < start_line or end_line > len(lines):
+            return {"ok": False, "error": "invalid_range"}
+        new_lines = replacement.splitlines()
+        if end_line - start_line + 1 > MAX_ORIGINAL_LINES or len(new_lines) > MAX_REPLACEMENT_LINES:
+            return {"ok": False, "error": "change_too_large"}
+        if _strip(lines[start_line - 1:end_line]) == new_lines:
+            return {"ok": False, "error": "empty_change"}
+        if index > 0 and start_line <= ordered[index - 1][1]:
+            return {"ok": False, "error": "overlapping_changes"}
+
+    patched = list(lines)
+    for start_line, end_line, replacement in reversed(ordered):  # bottom first, so line numbers stay valid
+        patched[start_line - 1:end_line] = [line + newline for line in replacement.splitlines()]
     try:
         ast.parse("".join(patched))
     except (SyntaxError, ValueError):

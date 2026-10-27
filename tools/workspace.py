@@ -16,39 +16,73 @@ import uuid
 from pathlib import Path
 
 import config
-from tools.patch_tools import apply_change
+from tools.patch_tools import apply_changes
 
 COPY_ID = re.compile(r"^run-[0-9a-f]{8}$")
 META_FILE = "meta.json"
 
 
 def create_copy(file_path, finding, proposal):
-    """Apply a proposal to a copy of file_path. Returns {"ok": True, "copy_id": ...} or an error."""
-    source = (config.PROJECT_ROOT / file_path).resolve()
-    if not source.is_relative_to(config.PROJECT_ROOT):
+    """Apply one proposal to a copy of file_path. Returns {"ok": True, "copy_id": ...} or an error."""
+    return create_combined_copy(file_path, [(finding, proposal)])
+
+
+def create_original_copy(file_path, finding):
+    """An unchanged copy of file_path, to show that the finding's attack works on the original."""
+    return create_combined_copy(file_path, [], rules=[finding["rule"]])
+
+
+def create_combined_copy(file_path, fixes, rules=None):
+    """Apply several (finding, proposal) pairs to one copy. They may not overlap.
+
+    meta.json lists each change with its old and new line numbers, so rescan can
+    map lines, and the rules whose attack tests run on this copy.
+    """
+    source = resolve_in_project(file_path)
+    if source is None:
         return {"ok": False, "error": "path_outside_project"}
-    start, end, replacement = proposal["start_line"], proposal["end_line"], proposal["replacement"]
-    change = apply_change(source, start, end, replacement)
-    if not change["ok"]:
-        return change
+    if fixes:
+        change = apply_changes(source, [(p["start_line"], p["end_line"], p["replacement"]) for _, p in fixes])
+        if not change["ok"]:
+            return change
+        text = "".join(change["patched"])
+    elif source.is_file():
+        text = source.read_bytes().decode("utf-8", errors="replace")
+    else:
+        return {"ok": False, "error": "file_not_found"}
+
+    changes, delta = [], 0
+    for finding, proposal in sorted(fixes, key=lambda fix: fix[1]["start_line"]):
+        start, end = proposal["start_line"], proposal["end_line"]
+        new_count = len(proposal["replacement"].splitlines())
+        changes.append({
+            "rule": finding["rule"], "finding_line": finding["line"], "start_line": start, "end_line": end,
+            "new_start_line": start + delta,
+            # The last new line (new_start - 1 if the change only deletes lines).
+            "new_end_line": start + delta + new_count - 1,
+        })
+        delta += new_count - (end - start + 1)
 
     copy_id = f"run-{uuid.uuid4().hex[:8]}"
     folder = Path(config.WORK_DIR) / copy_id
     folder.mkdir(parents=True)
-    (folder / source.name).write_text("".join(change["patched"]), encoding="utf-8", newline="")
+    (folder / source.name).write_text(text, encoding="utf-8", newline="")
     meta = {
-        "file": source.relative_to(config.PROJECT_ROOT).as_posix(),
+        "file": source.relative_to(config.PROJECT_ROOT.resolve()).as_posix(),
         "copy_file": source.name,
         "sample": source.stem,
-        "rule": finding["rule"],
-        "finding_line": finding["line"],
-        "start_line": start,
-        "end_line": end,
-        # The last line of the change in the copy (start - 1 if the change only deletes lines).
-        "new_end_line": start + len(replacement.splitlines()) - 1,
+        "rules": rules if rules is not None else [c["rule"] for c in changes],
+        "changes": changes,
     }
     (folder / META_FILE).write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return {"ok": True, "copy_id": copy_id}
+
+
+def resolve_in_project(file_path):
+    """The absolute path of file_path inside the project, or None if it points outside."""
+    root = config.PROJECT_ROOT.resolve()
+    path = (root / file_path).resolve()
+    return path if path.is_relative_to(root) else None
 
 
 def copy_folder(copy_id):

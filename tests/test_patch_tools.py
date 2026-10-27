@@ -80,3 +80,29 @@ def test_patch_tools_reject_non_python_and_missing_files():
 
     assert read_snippet(notes, 1, 1)["error"] == "unsupported_language"
     assert make_diff(LOGIN.with_name("missing.py"), 1, 1, "x")["error"] == "file_not_found"
+
+
+# ---------- several changes at once (used by apply) ----------
+
+def test_apply_changes_applies_all_from_the_bottom():
+    from tools.patch_tools import apply_changes
+
+    result = apply_changes(LOGIN, [
+        (5, 5, 'import os\nDB_PASSWORD = os.environ.get("DB_PASSWORD", "")'),
+        (18, 18, '    subprocess.run(["cp", "users.db", target])'),
+    ])
+
+    patched = [line.rstrip("\r\n") for line in result["patched"]]
+    assert result["ok"] is True
+    assert patched[4:6] == ["import os", 'DB_PASSWORD = os.environ.get("DB_PASSWORD", "")']
+    assert patched[18] == '    subprocess.run(["cp", "users.db", target])'  # line 18 moved to 19
+
+
+@pytest.mark.parametrize("changes", [
+    [(9, 10, "    pass"), (10, 10, "    pass")],
+    [(9, 10, "    pass"), (9, 9, "    pass")],
+])
+def test_apply_changes_refuses_overlapping_changes(changes):
+    from tools.patch_tools import apply_changes
+
+    assert apply_changes(LOGIN, changes) == {"ok": False, "error": "overlapping_changes"}
