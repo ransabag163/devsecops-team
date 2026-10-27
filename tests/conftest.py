@@ -21,5 +21,6 @@ def no_real_waiting(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def private_work_dir(tmp_path, monkeypatch):
-    """Tests never create or remove run folders in the real .work/."""
+    """Tests never create or remove run folders in the real .work/, nor write to reports/."""
     monkeypatch.setattr(config, "WORK_DIR", tmp_path / ".work")
+    monkeypatch.setattr(config, "REPORTS_DIR", tmp_path / "reports")

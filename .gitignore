@@ -227,3 +227,6 @@ __marimo__/
 
 # The tester's patched copies (run folders)
 .work/
+
+# Decision cards written by main.py review
+reports/
