@@ -39,7 +39,8 @@ def run_behavior(sample_path, kind, name, rule=None):
     command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(test_file)]
     if rule:
         command += ["-k", rule]
-    env = {**os.environ, "SAMPLE_UNDER_TEST": str(sample_path), "PYTHONDONTWRITEBYTECODE": "1"}
+    env = {**os.environ, "SAMPLE_UNDER_TEST": str(sample_path), "PYTHONDONTWRITEBYTECODE": "1",
+           "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
     return subprocess.run(command, env=env, capture_output=True, timeout=60).returncode
 
 

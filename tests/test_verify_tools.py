@@ -165,7 +165,8 @@ def probe(tmp_path, monkeypatch, work_dir):
 ENV_CHECK = '''\
 import os
 
-ALLOWED = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "SAMPLE_UNDER_TEST", "PYTHONDONTWRITEBYTECODE"}
+ALLOWED = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "SAMPLE_UNDER_TEST", "PYTHONDONTWRITEBYTECODE",
+           "PYTEST_DISABLE_PLUGIN_AUTOLOAD"}
 
 
 def test_environment_is_only_the_allowlist():

@@ -94,6 +94,8 @@ def behavior_env(folder, sample_path):
         "TMP": str(temp),
         "SAMPLE_UNDER_TEST": str(sample_path),
         "PYTHONDONTWRITEBYTECODE": "1",
+        # No third-party pytest plugins (langgraph brings anyio and langsmith): faster and fewer moving parts.
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
     })
     return env
 
