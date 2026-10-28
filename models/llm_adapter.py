@@ -102,6 +102,22 @@ def retry_wait(retry, retry_after):
     return min(max(seconds, 0), MAX_RETRY_AFTER)
 
 
+def trailing_json(text):
+    """The JSON object that ends text, as text, or None. Words before it are ignored."""
+    if not isinstance(text, str):
+        return None
+    text = text.rstrip()
+    decoder = json.JSONDecoder()
+    for start in (i for i, char in enumerate(text) if char == "{"):
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        if end == len(text) and isinstance(value, dict):
+            return text[start:]
+    return None
+
+
 class LLMClient:
     def __init__(self, provider, transport=None, timeout=config.HTTP_TIMEOUT, sleep=None, clock=None):
         self.provider = provider
@@ -146,9 +162,15 @@ class LLMClient:
 
         text = self.send_with_retries(url, headers, body)
         try:
-            content = json.loads(text)["choices"][0]["message"]["content"]
+            message = json.loads(text)["choices"][0]["message"]
+            content = message["content"]
         except (ValueError, KeyError, IndexError, TypeError):
             raise LLMError("bad_response") from None
+        if not content or not content.strip():
+            # gpt-oss on Groq sometimes writes its whole answer, action included, in the
+            # "reasoning" field and leaves content empty. Use only a JSON object that ends
+            # the reasoning; the agent still checks it like any other action.
+            content = trailing_json(message.get("reasoning")) or content
         if not isinstance(content, str):
             raise LLMError("bad_response")
         return content
