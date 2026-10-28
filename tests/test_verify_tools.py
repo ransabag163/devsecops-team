@@ -3,9 +3,10 @@ import hashlib
 import pytest
 
 import config
+from tools import verify_tools
 from tools.registry import execute
 from tools.verify_tools import rescan, run_behavior_tests
-from tools.workspace import copy_folder, create_copy, remove_copy
+from tools.workspace import copy_folder, create_copy, read_meta, remove_copy
 
 LOGIN = config.PROJECT_ROOT / "samples" / "login.py"
 SECRET = {"rule": "hardcoded_secret", "line": 5}
@@ -156,7 +157,8 @@ def probe(tmp_path, monkeypatch, work_dir):
 
     def make(works_body, attack_body="def test_attack_x():\n    pass\n"):
         (behavior / "test_probe_works.py").write_text(works_body)
-        (behavior / "test_probe_attack.py").write_text(attack_body)
+        if attack_body is not None:
+            (behavior / "test_probe_attack.py").write_text(attack_body)
         return create_copy("probe.py", {"rule": "x", "line": 1}, {"start_line": 1, "end_line": 1, "replacement": "x = 2"})["copy_id"]
 
     return make
@@ -320,3 +322,60 @@ def test_the_attack_fails_on_an_unchanged_copy_of_the_original(work_dir):
 
     assert (folder / "login.py").read_bytes() == LOGIN.read_bytes()
     assert run_behavior_tests(copy_id)["attack"] == "failed"
+
+
+def test_works_tests_run_even_without_an_attack_file(probe):
+    result = run_behavior_tests(probe("def test_works():\n    pass\n", attack_body=None))
+
+    assert (result["works"], result["attack"]) == ("passed", "not_available")
+
+
+# ---------- rescan with Bandit ----------
+
+@pytest.fixture
+def calc(tmp_path, monkeypatch, work_dir):
+    """A tiny project whose only file has one Bandit-only finding: B307 (eval) on line 2."""
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "calc.py").write_text("def calc(text):\n    return eval(text)\n")
+    monkeypatch.setattr(config, "PROJECT_ROOT", root)
+
+    def patch(replacement):
+        finding = {"rule": "B307", "line": 2, "sources": [{"tool": "bandit", "rule": "B307"}]}
+        return create_copy("calc.py", finding, {"start_line": 2, "end_line": 2, "replacement": replacement})["copy_id"]
+
+    return patch
+
+
+def test_rescan_a_bandit_finding_is_closed_when_bandit_stops_reporting_it(calc):
+    assert rescan(calc("    return int(text)")) == {"ok": True, "closed": True, "new_findings": []}
+
+
+def test_rescan_a_bandit_finding_still_reported_is_not_closed(calc):
+    assert rescan(calc("    return eval(text.strip())"))["closed"] is False
+
+
+def test_rescan_reports_a_bandit_finding_the_fix_added(calc):
+    result = rescan(calc("    import pickle\n    return pickle.loads(text)"))
+
+    assert result["closed"] is True
+    assert [(f["rule"], f["cwe"], f["line"]) for f in result["new_findings"]] == [("B301", "CWE-502", 3)]
+
+
+def test_a_copy_knows_every_name_of_a_merged_finding(work_dir):
+    finding = {"rule": "shell_injection", "line": 18,
+               "sources": [{"tool": "analyze_code", "rule": "shell_injection"}, {"tool": "bandit", "rule": "B602"}]}
+    fix = {"start_line": 18, "end_line": 18, "replacement": '    subprocess.run(["cp", "users.db", target])'}
+
+    copy_id = create_copy("samples/login.py", finding, fix)["copy_id"]
+
+    [change] = read_meta(copy_id)[1]["changes"]
+    assert change["rule_names"] == ["B602", "shell_injection"]
+    assert rescan(copy_id) == {"ok": True, "closed": True, "new_findings": []}
+
+
+def test_rescan_returns_a_bandit_error(work_dir, monkeypatch):
+    monkeypatch.setattr(verify_tools, "run_bandit", lambda path: {"ok": False, "error": "timeout"})
+    copy_id = create_copy("samples/login.py", SQL, GOOD_SQL_FIX)["copy_id"]
+
+    assert rescan(copy_id) == {"ok": False, "error": "run_bandit: timeout"}

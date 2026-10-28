@@ -1,6 +1,6 @@
 """The tester's tools. Both work on a patched copy in WORK_DIR and never touch the original.
 
-- rescan:             run analyze_code on the copy and compare with the original
+- rescan:             run analyze_code and Bandit on the copy and compare with the original
 - run_behavior_tests: run the sample's works and attack tests on the copy
 """
 
@@ -11,9 +11,11 @@ import sys
 
 import config
 from tools.analyze_code import analyze_code
+from tools.findings import merge_findings, rule_names
+from tools.run_bandit import run_bandit
 from tools.workspace import read_meta
 
-# A finding of the same rule this close to the changed lines means the weakness is still there.
+# A finding with the same rule name this close to the changed lines means the weakness is still there.
 NEAR_LINES = 3
 MAX_OUTPUT = 2000
 # The only environment variables the patched code gets. It is untrusted, so no keys or tokens.
@@ -25,31 +27,43 @@ def rescan(copy_id):
     folder, meta = read_meta(copy_id)
     if folder is None:
         return {"ok": False, "error": "unknown_copy"}
-    original = analyze_code(config.PROJECT_ROOT / meta["file"])
-    patched = analyze_code(folder / meta["copy_file"])
+    original = scan_both(config.PROJECT_ROOT / meta["file"])
+    patched = scan_both(folder / meta["copy_file"])
     if not original["ok"]:
         return original
     if not patched["ok"]:
         return patched
 
     changes = meta["changes"]
-    # closed only if every change closed its finding: the rule may not fire near the
-    # changed lines or where the finding itself moved to.
+    # closed only if every change closed its finding: no tool may report it (by any of
+    # its rule names) near the changed lines or where the finding itself moved to.
     closed = all(_change_closed(change, changes, patched["findings"]) for change in changes)
-    known = [(f["rule"], _new_lines(f["line"], changes)) for f in original["findings"]]
+    known = [(rule_names(f), _new_lines(f["line"], changes)) for f in original["findings"]]
     new_findings = [
         {key: f[key] for key in ("rule", "cwe", "line", "evidence")}
         for f in patched["findings"]
-        if not any(rule == f["rule"] and low <= f["line"] <= high for rule, (low, high) in known)
+        if not any(names & rule_names(f) and low <= f["line"] <= high for names, (low, high) in known)
     ]
     return {"ok": True, "closed": closed, "new_findings": new_findings}
+
+
+def scan_both(path):
+    """analyze_code and Bandit on one file, merged the same way as the pen_tester's findings."""
+    code = analyze_code(path)
+    if not code["ok"]:
+        return code
+    bandit = run_bandit(path)
+    if not bandit["ok"]:
+        return {"ok": False, "error": f"run_bandit: {bandit['error']}"}
+    return {"ok": True, "findings": merge_findings(code["findings"], bandit["findings"])}
 
 
 def _change_closed(change, changes, patched_findings):
     start, new_end = change["new_start_line"], change["new_end_line"]
     finding_low, finding_high = _new_lines(change["finding_line"], changes)
+    names = set(change.get("rule_names", [change["rule"]]))
     return not any(
-        f["rule"] == change["rule"]
+        names & rule_names(f)
         and (start - NEAR_LINES <= f["line"] <= new_end + NEAR_LINES or finding_low <= f["line"] <= finding_high)
         for f in patched_findings
     )
@@ -74,20 +88,24 @@ def run_behavior_tests(copy_id):
     name = meta["sample"]
     works_file = config.BEHAVIOR_DIR / f"test_{name}_works.py"
     attack_file = config.BEHAVIOR_DIR / f"test_{name}_attack.py"
-    if not works_file.is_file() or not attack_file.is_file():
+    if not works_file.is_file():
         return {"ok": True, "works": "not_available", "attack": "not_available", "output": ""}
 
     # The tests are copied next to the patched file, so pytest only sees the run folder.
     tests_dir = folder / "behavior"
     tests_dir.mkdir(exist_ok=True)
     for path in [config.BEHAVIOR_DIR / f for f in HELPER_FILES] + [works_file, attack_file]:
-        shutil.copy(path, tests_dir / path.name)
+        if path.is_file():
+            shutil.copy(path, tests_dir / path.name)
     (folder / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
 
     env = behavior_env(folder, folder / meta["copy_file"])
     works = _run_pytest(folder, env, [f"behavior/{works_file.name}"])
     # Only the attacks of the rules this copy is about (one rule, or the chosen rules for apply).
-    attack = _run_pytest(folder, env, [f"behavior/{attack_file.name}", "-k", " or ".join(meta["rules"])])
+    # A sample may have works tests and no attack tests at all (for example Bandit-only findings).
+    attack = {"result": "not_available", "output": "no attack tests for this sample"}
+    if attack_file.is_file():
+        attack = _run_pytest(folder, env, [f"behavior/{attack_file.name}", "-k", " or ".join(meta["rules"])])
     output = f"works:\n{works['output'][-MAX_OUTPUT // 2:]}\nattack:\n{attack['output'][-MAX_OUTPUT // 2:]}"
     return {"ok": True, "works": works["result"], "attack": attack["result"], "output": output[:MAX_OUTPUT]}
 

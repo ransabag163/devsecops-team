@@ -98,6 +98,36 @@ def test_errors_have_a_clear_code_and_no_key(key, transport, code):
     assert FAKE_KEY not in str(error.value)
 
 
+def reasoning_answer(content, reasoning):
+    return json.dumps({"choices": [{"message": {"content": content, "reasoning": reasoning}}]})
+
+
+ACTION = '{"kind": "tool", "name": "analyze_code", "args": {"file_path": "samples/login.py"}}'
+
+
+@pytest.mark.parametrize("content", ["", None])
+def test_empty_content_uses_the_json_that_ends_the_reasoning(key, content):
+    # What gpt-oss on Groq really returned: the action at the end of the reasoning, and no content.
+    transport = FakeTransport(text=reasoning_answer(content, "We need to first call analyze_code." + ACTION))
+
+    assert LLMClient("groq", transport).chat([]) == ACTION
+
+
+@pytest.mark.parametrize("reasoning", [
+    "I will call analyze_code and then decide.",       # no JSON at all
+    ACTION + " Then I will check the result.",         # the JSON does not end the reasoning
+    "Maybe [1, 2]",                                    # JSON, but not an object
+])
+def test_reasoning_without_a_final_json_object_is_not_used(key, reasoning):
+    assert LLMClient("groq", FakeTransport(text=reasoning_answer("", reasoning))).chat([]) == ""
+
+
+def test_content_wins_over_the_reasoning(key):
+    transport = FakeTransport(text=reasoning_answer('{"kind": "clarify", "text": "?"}', "thinking " + ACTION))
+
+    assert LLMClient("groq", transport).chat([]) == '{"kind": "clarify", "text": "?"}'
+
+
 def test_http_error_keeps_only_the_status(key):
     with pytest.raises(LLMError) as error:
         LLMClient("groq", FakeTransport(status=429, text="slow down")).chat([])

@@ -13,6 +13,9 @@ from main import main
 from models.base import DecisionModel
 from models.scripted import ScriptedDeveloperModel, ScriptedPenTesterModel, ScriptedTesterModel
 from orchestrator import Orchestrator, draw_mermaid
+from reports import PARTIAL_NOTE, render_markdown
+from state import Verification
+from tools.findings import merge_findings
 
 SAMPLES = config.PROJECT_ROOT / "samples"
 
@@ -25,17 +28,19 @@ BAD_3 = (1, 1, '"""Login."""')
 
 
 class FakePenTester(DecisionModel):
-    """Calls analyze_code, then marks only the given rules as real."""
+    """Calls analyze_code and run_bandit, then marks only the given rules as real."""
 
     def __init__(self, *real_rules):
         self.real_rules = real_rules
 
     def decide(self, state):
-        if not state["observations"]:
-            return {"kind": "tool", "name": "analyze_code", "args": {"file_path": state["file_path"]}}
+        tools = ["analyze_code", "run_bandit"]
+        if len(state["observations"]) < 2:
+            return {"kind": "tool", "name": tools[len(state["observations"])], "args": {"file_path": state["file_path"]}}
+        merged = merge_findings(state["observations"][0]["findings"], state["observations"][1]["findings"])
         findings = [{"rule": f["rule"], "line": f["line"], "reason": "test",
                      "verdict": "real" if f["rule"] in self.real_rules else "false_positive"}
-                    for f in state["observations"][-1]["findings"]]
+                    for f in merged]
         return {"kind": "final", "text": "done", "report": {"findings": findings}}
 
 
@@ -176,8 +181,11 @@ def test_cards_put_needs_you_first_and_have_every_field():
     assert [(c["id"], c["status"]) for c in report["cards"]] == [
         ("F2", "needs_you"), ("F3", "needs_you"), ("F1", "ready")]
     f1 = card(report, "F1")
-    assert set(f1) == {"id", "status", "cwe", "rule", "file", "line", "problem", "reason", "attack", "change",
-                       "diff", "checks", "attempts", "failed_attempts", "look_here"}
+    assert set(f1) == {"id", "status", "cwe", "rule", "file", "line", "sources", "proof", "problem", "reason",
+                       "attack", "change", "diff", "checks", "attempts", "failed_attempts", "look_here"}
+    assert f1["proof"] == "attack test"
+    assert card(report, "F3")["sources"] == [{"tool": "analyze_code", "rule": "shell_injection"},
+                                             {"tool": "bandit", "rule": "B602"}]
     assert (f1["cwe"], f1["rule"], f1["file"], f1["line"]) == ("CWE-798", "hardcoded_secret", "samples/login.py", 5)
     assert f1["checks"] == {"closed": True, "new_findings": [], "works": "passed", "attack": "passed"}
     assert f1["diff"].startswith("--- a/samples/login.py")
@@ -239,4 +247,101 @@ def test_the_graph_drawing_has_every_node():
 
     for node in ("scan", "next_finding", "develop", "verify", "report"):
         assert f"{node}({node})" in drawing
-    assert "retry, under 3 attempts" in drawing
+    assert "retry, attempts left" in drawing
+
+
+# ---------- findings that only Bandit reported ----------
+
+CALC = "def calc(text):\n    return eval(text)\n"
+CALC_WORKS = """\
+import importlib.util
+import os
+
+
+def load():
+    spec = importlib.util.spec_from_file_location("calc", os.environ["SAMPLE_UNDER_TEST"])
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_calc_reads_a_number():
+    assert load().calc("2") == 2
+"""
+INT_FIX = (2, 2, "    return int(text)")  # Bandit stops reporting B307 and the works test passes
+
+
+@pytest.fixture
+def calc_project(tmp_path, monkeypatch):
+    """A temporary project: calc.py, whose only finding is Bandit's B307 (eval), and a works test, no attack test."""
+    root = tmp_path / "project"
+    behavior = root / "behavior"
+    behavior.mkdir(parents=True)
+    (root / "calc.py").write_text(CALC, encoding="utf-8")
+    (behavior / "test_calc_works.py").write_text(CALC_WORKS, encoding="utf-8")
+    monkeypatch.setattr(config, "PROJECT_ROOT", root)
+    monkeypatch.setattr(config, "BEHAVIOR_DIR", behavior)
+    return root
+
+
+def review_calc(root, dev, tester):
+    orchestrator = Orchestrator(PenTester(FakePenTester("B307"), project_root=root),
+                                Developer(dev, project_root=root), tester, Deadline(600))
+    return orchestrator.review("calc.py")["final_report"]
+
+
+def test_a_bandit_only_finding_is_checked_but_always_needs_you(calc_project):
+    tester = Tester(FakeTester(("human", "no attack test")), project_root=calc_project)
+
+    report = review_calc(calc_project, FakeDeveloper(INT_FIX), tester)
+    [f1] = report["cards"]
+
+    assert (f1["rule"], f1["status"], f1["attempts"]) == ("B307", "needs_you", 1)
+    assert f1["sources"] == [{"tool": "bandit", "rule": "B307"}]
+    assert f1["proof"] == "partial proof: no attack test"
+    # rescan (with Bandit) says it is closed and the works test passed, but no attack test could run.
+    assert f1["checks"] == {"closed": True, "new_findings": [], "works": "passed", "attack": "not_available"}
+    assert f1["attack"] == {"before": "not_available", "after": "not_available"}
+    assert f1["look_here"][0] == PARTIAL_NOTE
+    assert f1["change"] == {"start_line": 2, "end_line": 2, "replacement": "    return int(text)"}
+    md = render_markdown(report)
+    assert "partial proof: no attack test" in md and "bandit (B307)" in md
+
+
+def test_a_bandit_only_finding_gets_one_attempt_and_no_retry(calc_project):
+    dev = FakeDeveloper(INT_FIX, INT_FIX)
+    tester = Tester(FakeTester(("retry", "use int"), ("approve", "")), project_root=calc_project)
+
+    [f1] = review_calc(calc_project, dev, tester)["cards"]
+
+    assert (f1["status"], f1["attempts"]) == ("needs_you", 1)
+    assert len(dev.seen) == 1
+    assert f1["failed_attempts"] == [{"number": 1, "feedback": "use int"}]
+    assert "הניסיון היחיד נכשל." in f1["look_here"]
+
+
+class ApprovingTester:
+    """Says approve with every check passed, to show the orchestrator itself never makes a Bandit-only card ready."""
+    model = ScriptedTesterModel()
+
+    def verify_one(self, file_path, finding, proposal, keep_work=False):
+        verification = Verification(finding["id"], True, [], "passed", "passed", "approve", "", "final")
+        return {"status": "final", "verification": verification, "run": None}
+
+
+def test_even_an_approve_does_not_make_a_bandit_only_card_ready(calc_project):
+    [f1] = review_calc(calc_project, FakeDeveloper(INT_FIX), ApprovingTester())["cards"]
+
+    assert f1["status"] == "needs_you"
+
+
+def test_scripted_review_of_bandit_cases_gives_five_partial_proof_cards(capsys):
+    assert main(["review", "samples/bandit_cases.py"]) == 1
+    report = json.loads(capsys.readouterr().out)
+
+    assert [(c["id"], c["rule"], c["status"]) for c in report["cards"]] == [
+        ("F1", "B307", "needs_you"), ("F2", "B301", "needs_you"), ("F3", "B506", "needs_you"),
+        ("F4", "B324", "needs_you"), ("F5", "B501", "needs_you")]
+    assert {c["proof"] for c in report["cards"]} == {"partial proof: no attack test"}
+    # No attack test runs on the original for a Bandit-only finding.
+    assert {c["attack"]["before"] for c in report["cards"]} == {"not_available"}

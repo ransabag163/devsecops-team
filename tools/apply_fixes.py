@@ -59,7 +59,7 @@ def apply_report(report_path, ids):
 
 def _check_combined(file_path, chosen):
     """rescan, ALL works tests and the attack tests of the chosen rules, on one copy with every change."""
-    fixes = [({"rule": c["rule"], "line": c["line"]}, c["change"]) for c in chosen]
+    fixes = [({"rule": c["rule"], "line": c["line"], "sources": c.get("sources", [])}, c["change"]) for c in chosen]
     copy = create_combined_copy(file_path, fixes)
     if not copy["ok"]:
         return [f"could not make the combined copy: {copy['error']}"]

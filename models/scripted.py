@@ -1,7 +1,7 @@
 """Rule-based models: fixed if/else decisions, no AI and no API.
 
-ScriptedPenTesterModel trusts every rule match. Judging the context of a
-finding is what the real model adds in step 2.
+ScriptedPenTesterModel runs analyze_code and run_bandit and trusts every rule
+match. Judging the context of a finding is what the real model adds in step 2.
 
 ScriptedDeveloperModel only fixes hardcoded_secret and skips the rest.
 
@@ -11,6 +11,7 @@ ScriptedTesterModel runs both checks and approves only if all of them passed.
 import ast
 
 from models.base import DecisionModel
+from tools.findings import merge_findings
 from tools.verify_tools import collect_checks, failed_checks
 
 
@@ -22,20 +23,22 @@ class ScriptedPenTesterModel(DecisionModel):
         if not file_path:
             return {"kind": "clarify", "text": "Which Python file should I check?"}
 
-        if not observations:
+        if len(observations) == 0:
             return {"kind": "tool", "name": "analyze_code", "args": {"file_path": file_path}}
+        if len(observations) == 1:
+            return {"kind": "tool", "name": "run_bandit", "args": {"file_path": file_path}}
 
-        last = observations[-1]
-        if not last.get("ok"):
+        failed = next((o for o in observations if not o.get("ok")), None)
+        if failed:
             return {
                 "kind": "final",
-                "text": f"Could not analyze the file: {last.get('error')}",
-                "report": {"findings": [], "error": last.get("error")},
+                "text": f"Could not analyze the file: {failed.get('error')}",
+                "report": {"findings": [], "error": failed.get("error")},
             }
 
         findings = [
-            {**f, "verdict": "real", "reason": "rule match"}
-            for f in last["findings"]
+            {"rule": f["rule"], "line": f["line"], "verdict": "real", "reason": "rule match"}
+            for f in merge_findings(observations[0]["findings"], observations[1]["findings"])
         ]
         return {
             "kind": "final",
