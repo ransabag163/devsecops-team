@@ -56,6 +56,9 @@ class BaseAgent:
 
             entry = {"step": step, "action": action}
             self.add_retries(entry)
+            extra = self.model.last_extra_objects()
+            if extra:  # the reply had more JSON objects after this action; none of them runs
+                entry["extra_objects_ignored"] = extra
             trace.append(entry)
 
             kind = action.get("kind") if isinstance(action, dict) else None

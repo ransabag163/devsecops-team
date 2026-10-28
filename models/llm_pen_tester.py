@@ -6,7 +6,7 @@ The LLM only proposes one JSON action per step. The agent checks every action
 
 import config
 from models.llm_adapter import LLMClient
-from models.llm_common import PLAIN_TEXT_NOTE, LLMDecisionModel, build_messages, parse_action
+from models.llm_common import PLAIN_TEXT_NOTE, LLMDecisionModel, build_messages
 
 SYSTEM_PROMPT = """\
 You are pen_tester, a security reviewer for Python code. You work in steps.
@@ -53,4 +53,4 @@ class LLMPenTesterModel(LLMDecisionModel):
             return {"kind": "clarify", "text": "Which Python file should I check?"}
         task = f"Check this file: {state['file_path']}"
         reply = self.client.chat(build_messages(SYSTEM_PROMPT, task, state))
-        return parse_action(reply)
+        return self.parse(reply)

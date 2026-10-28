@@ -19,6 +19,10 @@ class DecisionModel:
         """Retries of the last decide() call, for the trace. Only LLM models retry."""
         return []
 
+    def last_extra_objects(self):
+        """JSON objects after the first one in the last reply, ignored. Only LLM models write replies."""
+        return 0
+
     def set_deadline(self, deadline):
         """Give the model the run's Deadline. Only LLM models need it (for their requests)."""
 

@@ -116,6 +116,55 @@ def test_unparsable_reply_is_kept_in_the_trace():
     assert run["trace"][0]["action"]["raw"] == "Sure! Here is my answer."
 
 
+def test_only_the_first_of_two_objects_is_used_and_the_rest_is_counted():
+    # What gpt-oss on Groq really wrote: the tool call, then a clarify in the same reply.
+    two = tool_call(name="run_bandit") + json.dumps({"kind": "clarify", "text": "Please provide the result."})
+    client = FakeClient(tool_call(), two, final(LOGIN_VERDICTS))
+
+    run = review(client)
+
+    assert run["status"] == "final"  # the clarify was never acted on
+    step2 = run["trace"][1]
+    assert step2["action"] == json.loads(tool_call(name="run_bandit"))
+    assert step2["extra_objects_ignored"] == 1
+    assert "extra_objects_ignored" not in run["trace"][0]
+    # The model's history holds only the action that ran, never the ignored objects.
+    assert "Please provide" not in json.dumps(client.calls[2])
+
+
+def test_objects_after_the_first_never_run():
+    # A second tool call in the same reply is ignored: only one tool result per step.
+    client = FakeClient(tool_call() + tool_call(name="run_bandit") + tool_call("samples/clean.py"),
+                        tool_call(name="run_bandit"), final(LOGIN_VERDICTS))
+
+    run = review(client)
+
+    assert run["trace"][0]["extra_objects_ignored"] == 2
+    assert [entry["action"]["name"] for entry in run["trace"][:2]] == ["analyze_code", "run_bandit"]
+
+
+@pytest.mark.parametrize("reply", [
+    json.dumps({"kind": "dance"}) + tool_call(),          # first object has no valid kind
+    json.dumps({"name": "analyze_code"}) + tool_call(),   # first object has no kind at all
+    json.dumps([1, 2]) + tool_call(),                     # first value is not an object
+    tool_call() + " and then I will wait.",               # words after the object
+])
+def test_an_invalid_first_object_is_invalid_action(reply):
+    run = review(FakeClient(reply))
+
+    assert run["status"] == "invalid_action"
+    assert run["trace"][0]["action"]["kind"] is None
+    assert "observation" not in run["trace"][0]  # nothing ran
+    assert "extra_objects_ignored" not in run["trace"][0]
+
+
+def test_no_json_at_all_is_invalid_action():
+    run = review(FakeClient("I will call analyze_code first."))
+
+    assert run["status"] == "invalid_action"
+    assert run["trace"][0]["action"]["error"] == "unparsable_json"
+
+
 @pytest.mark.parametrize("name, path, error", [
     ("write_file", "samples/login.py", "unknown_tool"),
     ("analyze_code", "../outside.py", "path_outside_project"),
