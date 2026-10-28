@@ -1,4 +1,6 @@
 import config
+from agents.pen_tester import PenTester
+from models.scripted import ScriptedPenTesterModel
 from tools.findings import merge_findings, only_bandit, rule_names
 from tools.registry import execute
 
@@ -44,3 +46,10 @@ def test_run_bandit_paths_must_stay_in_the_project():
     action = {"kind": "tool", "name": "run_bandit", "args": {"file_path": "../outside.py"}}
 
     assert execute("pen_tester", action, config.PROJECT_ROOT) == {"ok": False, "error": "path_outside_project"}
+
+
+def test_every_finding_in_bandit_cases_is_bandit_only():
+    report = PenTester(ScriptedPenTesterModel()).review("samples/bandit_cases.py")["result"]
+
+    assert [f["rule"] for f in report["findings"]] == ["B307", "B301", "B506", "B324", "B501"]
+    assert all(only_bandit(f) and f["message"] for f in report["findings"])

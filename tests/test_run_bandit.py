@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 import config
+from tools.analyze_code import analyze_code
 from tools.run_bandit import run_bandit
 
 SAMPLES = config.PROJECT_ROOT / "samples"
@@ -28,6 +29,20 @@ def write(tmp_path, text, name="case.py"):
 
 
 # ---------- with the real Bandit (it only reads the files) ----------
+
+def test_bandit_cases_has_the_five_findings_of_expected_md():
+    result = run_bandit(SAMPLES / "bandit_cases.py")
+
+    assert [(f["rule"], f["cwe"], f["line"]) for f in result["findings"]] == [
+        ("B307", "CWE-78", 14),    # eval(input(...))
+        ("B301", "CWE-502", 22),   # pickle.loads
+        ("B506", "CWE-20", 27),    # yaml.load without a safe loader
+        ("B324", "CWE-327", 31),   # md5 for passwords
+        ("B501", "CWE-295", 36),   # requests with verify=False
+    ]
+    # analyze_code has no rules for these, so all five are Bandit-only.
+    assert analyze_code(SAMPLES / "bandit_cases.py") == {"ok": True, "findings": []}
+
 
 def test_results_get_our_finding_shape(tmp_path):
     result = run_bandit(write(tmp_path, CASES))

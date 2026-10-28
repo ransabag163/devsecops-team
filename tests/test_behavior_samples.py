@@ -44,9 +44,14 @@ def run_behavior(sample_path, kind, name, rule=None):
     return subprocess.run(command, env=env, capture_output=True, timeout=60).returncode
 
 
-@pytest.mark.parametrize("name", ["login", "injection"])
+@pytest.mark.parametrize("name", ["login", "injection", "bandit_cases"])
 def test_works_passes_on_the_original(name):
     assert run_behavior(config.PROJECT_ROOT / "samples" / f"{name}.py", "works", name) == 0
+
+
+def test_bandit_cases_has_no_attack_tests():
+    # Bandit's rules have no attack tests, so its findings can never be proven fixed.
+    assert not (config.BEHAVIOR_DIR / "test_bandit_cases_attack.py").exists()
 
 
 @pytest.mark.parametrize("name, rule", [

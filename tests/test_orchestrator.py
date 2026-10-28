@@ -333,3 +333,15 @@ def test_even_an_approve_does_not_make_a_bandit_only_card_ready(calc_project):
     [f1] = review_calc(calc_project, FakeDeveloper(INT_FIX), ApprovingTester())["cards"]
 
     assert f1["status"] == "needs_you"
+
+
+def test_scripted_review_of_bandit_cases_gives_five_partial_proof_cards(capsys):
+    assert main(["review", "samples/bandit_cases.py"]) == 1
+    report = json.loads(capsys.readouterr().out)
+
+    assert [(c["id"], c["rule"], c["status"]) for c in report["cards"]] == [
+        ("F1", "B307", "needs_you"), ("F2", "B301", "needs_you"), ("F3", "B506", "needs_you"),
+        ("F4", "B324", "needs_you"), ("F5", "B501", "needs_you")]
+    assert {c["proof"] for c in report["cards"]} == {"partial proof: no attack test"}
+    # No attack test runs on the original for a Bandit-only finding.
+    assert {c["attack"]["before"] for c in report["cards"]} == {"not_available"}
