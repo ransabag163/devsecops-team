@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
+from tools.findings import only_bandit
 
 # One plain line per rule, for the person who reads the card.
 PROBLEMS = {
@@ -20,6 +21,10 @@ PROBLEMS = {
     "shell_injection": "קלט של משתמש מגיע לפקודת shell, ולכן קלט מתוחכם יכול להריץ פקודות אחרות.",
 }
 STATUS_ORDER = {"needs_you": 0, "ready": 1}
+FULL_PROOF = "attack test"
+PARTIAL_PROOF = "partial proof: no attack test"
+PARTIAL_NOTE = ("הוכחה חלקית: רק Bandit מצא את הממצא הזה, ואין לו טסט התקפה. הבדיקות מראות רק ש־Bandit"
+                " כבר לא מדווח עליו ושהקוד עדיין עובד, לא שההתקפה נחסמה. לכן הכרטיס תמיד צריך אותך.")
 
 
 def file_sha256(path):
@@ -42,6 +47,9 @@ def make_card(file_path, finding, status, attack_before, attempts, notes=()):
     change = None
     if proposal.get("status") == "proposed":
         change = {key: proposal[key] for key in ("start_line", "end_line", "replacement")}
+    partial = only_bandit(finding)
+    if partial:
+        notes = [PARTIAL_NOTE, *notes]
     return {
         "id": finding["id"],
         "status": status,
@@ -49,7 +57,9 @@ def make_card(file_path, finding, status, attack_before, attempts, notes=()):
         "rule": finding["rule"],
         "file": file_path,
         "line": finding["line"],
-        "problem": PROBLEMS.get(finding["rule"], "חולשה שהכלי מצא. קרא את הנימוק."),
+        "sources": finding.get("sources", []),
+        "proof": PARTIAL_PROOF if partial else FULL_PROOF,
+        "problem": PROBLEMS.get(finding["rule"]) or finding.get("message") or "חולשה שהכלי מצא. קרא את הנימוק.",
         "reason": finding.get("reason", ""),
         "attack": {"before": attack_before, "after": checks["attack"]},
         "change": change,
@@ -57,19 +67,19 @@ def make_card(file_path, finding, status, attack_before, attempts, notes=()):
         "checks": checks,
         "attempts": len(attempts),
         "failed_attempts": [{"number": a["number"], "feedback": a["feedback"]} for a in failed],
-        "look_here": _look_here(status, attack_before, checks, verification, notes),
+        "look_here": _look_here(status, attack_before, checks, verification, notes, partial),
     }
 
 
-def _look_here(status, attack_before, checks, verification, notes):
+def _look_here(status, attack_before, checks, verification, notes, partial=False):
     """What a human should check: the tester's note, and what the application could not verify."""
     items = list(notes)
     if verification.get("verdict") == "human" and verification.get("feedback"):
         items.append(f"הערת ה־tester לאדם: {verification['feedback']}")
-    if attack_before != "failed":
+    if attack_before != "failed" and not partial:  # partial: the note above already says there is no attack test
         items.append(f"טסט ההתקפה לא נכשל על הקובץ המקורי ({attack_before}), ולכן הוא לא מוכיח שהחולשה קיימת.")
     if status == "needs_you":
-        for kind in ("works", "attack"):
+        for kind in ("works",) if partial else ("works", "attack"):
             if checks[kind] not in ("passed", "not_run"):  # not_run: no proposal reached the tests
                 items.append(f"טסטי {kind}: {checks[kind]}.")
     return items
@@ -145,6 +155,8 @@ def _render_card(card):
         f"### {card['id']} · {card['cwe']} · {card['rule']}",
         "",
         f"- **מיקום:** `{card['file']}`, שורה {card['line']}",
+        "- **נמצא על ידי:** " + (", ".join(f"{s['tool']} ({s['rule']})" for s in card["sources"]) or "-"),
+        f"- **הוכחה:** {card['proof']}",
         f"- **הבעיה:** {card['problem']}",
         f"- **נימוק ה־pen_tester:** {card['reason']}",
         f"- **טסט ההתקפה** (נכשל = ההתקפה הצליחה, עבר = ההתקפה נחסמה): "

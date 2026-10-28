@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 import config
+from tools.findings import rule_names
 from tools.patch_tools import apply_changes
 
 COPY_ID = re.compile(r"^run-[0-9a-f]{8}$")
@@ -57,6 +58,8 @@ def create_combined_copy(file_path, fixes, rules=None):
         new_count = len(proposal["replacement"].splitlines())
         changes.append({
             "rule": finding["rule"], "finding_line": finding["line"], "start_line": start, "end_line": end,
+            # Every name the finding has (analyze_code and Bandit), so rescan knows it under both.
+            "rule_names": sorted(rule_names(finding)),
             "new_start_line": start + delta,
             # The last new line (new_start - 1 if the change only deletes lines).
             "new_end_line": start + delta + new_count - 1,

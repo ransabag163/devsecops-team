@@ -11,6 +11,9 @@ LangGraph in four words:
 
 The agents do not know about the graph. The graph only decides the order;
 every rule is still enforced by the agents and the application.
+
+A finding that only Bandit reported has no attack test, so it can never be
+proven fixed: it gets one attempt (no retry), and its card is always needs_you.
 """
 
 from typing import TypedDict
@@ -18,10 +21,12 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 import reports
+from tools.findings import only_bandit
 from tools.verify_tools import run_behavior_tests
 from tools.workspace import create_original_copy, remove_copy, resolve_in_project
 
 MAX_ATTEMPTS = 3
+BANDIT_ONLY_ATTEMPTS = 1  # no attack test can prove the fix, so a retry would not prove more
 # LangGraph stops a graph after this many node runs; 3 findings x 3 attempts need about 25.
 RECURSION_LIMIT = 100
 DEADLINE_REASON = "run deadline passed"
@@ -70,9 +75,9 @@ class Orchestrator:
             "a finding": "develop", "none left or deadline": "report"})
         graph.add_conditional_edges("develop", self.after_develop, {
             "proposed": "verify", "rejected, try again": "develop",
-            "skipped or 3 attempts: needs_you": "next_finding", "stop": "report"})
+            "skipped or no attempts left: needs_you": "next_finding", "stop": "report"})
         graph.add_conditional_edges("verify", self.after_verify, {
-            "retry, under 3 attempts": "develop", "approve: ready, or needs_you": "next_finding", "stop": "report"})
+            "retry, attempts left": "develop", "approve: ready, or needs_you": "next_finding", "stop": "report"})
         graph.add_edge("report", END)
         return graph.compile()
 
@@ -165,13 +170,13 @@ class Orchestrator:
         verification = checked["verification"].to_dict()
         attempt = {"number": number, "proposal": proposal, "verification": verification,
                    "feedback": verification["feedback"]}
-        if verification["verdict"] == "approve":
+        if verification["verdict"] == "approve" and not only_bandit(finding):
             card = self.card(state, "ready", attempts + [attempt])
             return {"runs": runs, "attempts": attempts + [attempt], "cards": state["cards"] + [card],
                     "outcome": "done"}
         if verification["verdict"] == "retry":
             return self.after_failed_attempt(state, runs, attempt)
-        card = self.card(state, "needs_you", attempts + [attempt])  # human
+        card = self.card(state, "needs_you", attempts + [attempt])  # human, or approve without an attack test
         return {"runs": runs, "attempts": attempts + [attempt], "cards": state["cards"] + [card], "outcome": "done"}
 
     def report(self, state):
@@ -207,20 +212,22 @@ class Orchestrator:
 
     def after_develop(self, state):
         return {"verify": "proposed", "develop": "rejected, try again",
-                "done": "skipped or 3 attempts: needs_you", "stop": "stop"}[state["outcome"]]
+                "done": "skipped or no attempts left: needs_you", "stop": "stop"}[state["outcome"]]
 
     def after_verify(self, state):
-        return {"develop": "retry, under 3 attempts", "done": "approve: ready, or needs_you",
+        return {"develop": "retry, attempts left", "done": "approve: ready, or needs_you",
                 "stop": "stop"}[state["outcome"]]
 
     # ---------- helpers ----------
 
     def after_failed_attempt(self, state, runs, attempt):
-        """Try again with the feedback, or give the finding to a human after MAX_ATTEMPTS."""
+        """Try again with the feedback, or give the finding to a human when no attempts are left."""
         attempts = state["attempts"] + [attempt]
-        if len(attempts) < MAX_ATTEMPTS:
+        limit = max_attempts(state["finding"])
+        if len(attempts) < limit:
             return {"runs": runs, "attempts": attempts, "proposal": None, "outcome": "develop"}
-        card = self.card(state, "needs_you", attempts, [f"{MAX_ATTEMPTS} ניסיונות נכשלו."])
+        note = f"{MAX_ATTEMPTS} ניסיונות נכשלו." if limit == MAX_ATTEMPTS else "הניסיון היחיד נכשל."
+        card = self.card(state, "needs_you", attempts, [note])
         return {"runs": runs, "attempts": attempts, "cards": state["cards"] + [card], "outcome": "done"}
 
     def card(self, state, status, attempts, notes=()):
@@ -228,6 +235,8 @@ class Orchestrator:
 
     def attack_before(self, file_path, finding):
         """Run the finding's attack test once on an unchanged copy. Expected: failed."""
+        if only_bandit(finding):
+            return "not_available"  # Bandit rules have no attack tests
         copy = create_original_copy(file_path, finding)
         if not copy["ok"]:
             return "not_run"
@@ -253,6 +262,10 @@ class Orchestrator:
         if copy_id:
             run["copy_id"] = copy_id
         return {**state["runs"], agent: state["runs"][agent] + [run]}
+
+
+def max_attempts(finding):
+    return BANDIT_ONLY_ATTEMPTS if only_bandit(finding) else MAX_ATTEMPTS
 
 
 def draw_mermaid(orchestrator):

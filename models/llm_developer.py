@@ -22,6 +22,8 @@ Allowed tools (the only ones):
   replaces lines start_line..end_line (inclusive) with replacement in a copy and
   returns a unified diff, or an error (invalid_range, change_too_large,
   syntax_error, empty_change). It never writes the file.
+The finding's rule is our rule name or a Bandit test id (for example B307). For
+a Bandit finding, its message says what Bandit found.
 
 Action formats:
 {"kind": "tool", "name": "read_snippet", "args": {"file_path": "<path>", "start_line": 1, "end_line": 20}}
