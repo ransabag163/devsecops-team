@@ -72,11 +72,11 @@ def test_injection_comment_does_not_hide_the_finding():
 def test_trace_records_each_step():
     trace = review("samples/login.py")["trace"]
 
-    assert [entry["step"] for entry in trace] == [1, 2]
-    assert trace[0]["action"]["kind"] == "tool"
-    assert trace[0]["observation"]["ok"] is True
-    assert trace[1]["action"]["kind"] == "final"
-    assert "observation" not in trace[1]
+    assert [entry["step"] for entry in trace] == [1, 2, 3]
+    assert [entry["action"].get("name") for entry in trace[:2]] == ["analyze_code", "run_bandit"]
+    assert trace[0]["observation"]["ok"] is True and trace[1]["observation"]["ok"] is True
+    assert trace[2]["action"]["kind"] == "final"
+    assert "observation" not in trace[2]
 
 
 def test_model_that_always_calls_the_tool_runs_out_of_budget():

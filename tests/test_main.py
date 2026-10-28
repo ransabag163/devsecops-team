@@ -41,7 +41,7 @@ def test_trace_flag_prints_the_trace(capsys):
     captured = capsys.readouterr()
 
     assert json.loads(captured.out)["file"] == "samples/login.py"
-    assert [entry["step"] for entry in final_trace(captured.err)] == [1, 2]
+    assert [entry["step"] for entry in final_trace(captured.err)] == [1, 2, 3]
 
 
 # ---------- --model llm, always with a fake transport ----------
@@ -64,6 +64,7 @@ def use_transport(monkeypatch, transport):
 def tool_then_final(verdict):
     return (
         json.dumps({"kind": "tool", "name": "analyze_code", "args": {"file_path": "samples/injection.py"}}),
+        json.dumps({"kind": "tool", "name": "run_bandit", "args": {"file_path": "samples/injection.py"}}),
         json.dumps({"kind": "final", "text": "done", "report": {"findings": [
             {"rule": "shell_injection", "line": 9, "verdict": verdict, "reason": "checked the context"},
         ]}}),
@@ -145,7 +146,7 @@ def test_fix_trace_has_both_agents(capsys):
     main(["samples/login.py", "--fix", "--trace"])
     trace = final_trace(capsys.readouterr().err)
 
-    assert [entry["step"] for entry in trace["pen_tester"]] == [1, 2]
+    assert [entry["step"] for entry in trace["pen_tester"]] == [1, 2, 3]
     assert [run["finding_id"] for run in trace["developer"]] == ["F1", "F2", "F3"]
 
 
@@ -315,7 +316,7 @@ def test_trace_prints_each_step_live_in_order(capsys, work_dir):
 
     steps = [(s["agent"], s["finding_id"], s["step"]) for s in live_steps(err)]
     assert steps == [
-        ("pen_tester", None, 1), ("pen_tester", None, 2),
+        ("pen_tester", None, 1), ("pen_tester", None, 2), ("pen_tester", None, 3),
         ("developer", "F1", 1), ("developer", "F1", 2), ("developer", "F1", 3),
         ("developer", "F2", 1), ("developer", "F3", 1),
         ("tester", "F1", 1), ("tester", "F1", 2), ("tester", "F1", 3),
@@ -337,5 +338,5 @@ def test_live_steps_are_printed_before_the_next_step_starts(capsys, monkeypatch,
     monkeypatch.setattr(ScriptedTesterModel, "decide", decide)
     main(["samples/login.py", "--verify", "--trace"])
 
-    # Before the tester's first step, all 7 earlier steps were already printed; then one more each step.
-    assert seen == [7, 1, 1]
+    # Before the tester's first step, all 8 earlier steps were already printed; then one more each step.
+    assert seen == [8, 1, 1]

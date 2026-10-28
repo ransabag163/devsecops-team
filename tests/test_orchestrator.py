@@ -13,6 +13,7 @@ from main import main
 from models.base import DecisionModel
 from models.scripted import ScriptedDeveloperModel, ScriptedPenTesterModel, ScriptedTesterModel
 from orchestrator import Orchestrator, draw_mermaid
+from tools.findings import merge_findings
 
 SAMPLES = config.PROJECT_ROOT / "samples"
 
@@ -25,17 +26,19 @@ BAD_3 = (1, 1, '"""Login."""')
 
 
 class FakePenTester(DecisionModel):
-    """Calls analyze_code, then marks only the given rules as real."""
+    """Calls analyze_code and run_bandit, then marks only the given rules as real."""
 
     def __init__(self, *real_rules):
         self.real_rules = real_rules
 
     def decide(self, state):
-        if not state["observations"]:
-            return {"kind": "tool", "name": "analyze_code", "args": {"file_path": state["file_path"]}}
+        tools = ["analyze_code", "run_bandit"]
+        if len(state["observations"]) < 2:
+            return {"kind": "tool", "name": tools[len(state["observations"])], "args": {"file_path": state["file_path"]}}
+        merged = merge_findings(state["observations"][0]["findings"], state["observations"][1]["findings"])
         findings = [{"rule": f["rule"], "line": f["line"], "reason": "test",
                      "verdict": "real" if f["rule"] in self.real_rules else "false_positive"}
-                    for f in state["observations"][-1]["findings"]]
+                    for f in merged]
         return {"kind": "final", "text": "done", "report": {"findings": findings}}
 
 

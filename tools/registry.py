@@ -8,11 +8,13 @@ from pathlib import Path
 
 from tools.analyze_code import analyze_code
 from tools.patch_tools import make_diff, read_snippet
+from tools.run_bandit import run_bandit
 from tools.verify_tools import rescan, run_behavior_tests
 
 # Every tool, with the exact arguments it accepts and their types.
 TOOLS = {
     "analyze_code": {"func": analyze_code, "args": {"file_path": str}},
+    "run_bandit": {"func": run_bandit, "args": {"file_path": str}},
     "read_snippet": {
         "func": read_snippet,
         "args": {"file_path": str, "start_line": int, "end_line": int},
@@ -28,7 +30,7 @@ TOOLS = {
 
 # Which tools each agent may use.
 ALLOWLIST = {
-    "pen_tester": {"analyze_code"},
+    "pen_tester": {"analyze_code", "run_bandit"},
     "developer": {"read_snippet", "make_diff"},
     "tester": {"rescan", "run_behavior_tests"},
 }

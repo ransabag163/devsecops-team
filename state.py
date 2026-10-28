@@ -18,6 +18,10 @@ class Finding:
     evidence: str
     verdict: str
     reason: str
+    # Which tools found it, each with its own rule name, e.g. [{"tool": "bandit", "rule": "B602"}].
+    sources: list = field(default_factory=list)
+    # Bandit's own description of the problem, if Bandit found it.
+    message: str = ""
 
     def to_dict(self):
         return asdict(self)
