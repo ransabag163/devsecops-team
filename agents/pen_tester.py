@@ -8,10 +8,8 @@ both sources), and the model gives a verdict for each merged finding. The agent
 checks that verdict against what the tools really found: the model may not
 drop, add or invent findings, and the cwe and evidence always come from the tools.
 """
-
-from pathlib import Path
-
 import config
+from pathlib import Path
 from agents.base_agent import BaseAgent
 from state import Finding, FindingsReport
 from tools.findings import merge_findings, rule_names

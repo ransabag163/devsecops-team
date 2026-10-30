@@ -27,6 +27,11 @@ class BaseAgent:
         self.on_step = None
 
     def run(self, state):
+        """
+        Run the agent loop for up to max_steps iterations.
+        Each step asks the model to decide an action (final, clarify, or tool)
+        and executes it. Returns a dict with status, result, and trace.
+        """
         if type(self.max_steps) is not int or self.max_steps < 1:
             raise ValueError("max_steps must be a positive int")
 
